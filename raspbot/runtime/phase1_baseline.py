@@ -18,6 +18,7 @@ from raspbot.perception import (
     compute_lane_error,
     detect_road_lines,
     estimate_heading,
+    edge_occupancy,
     visualize_binary_debug,
     warp_perspective,
 )
@@ -133,6 +134,51 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         lambda x: None,
     )
 
+    # 끝단 보조 조향
+    edge_cfg = control_cfg.get("edge", {})
+    cv2.createTrackbar(
+        "edge_width_px",
+        CONTROL_WINDOW,
+        int(edge_cfg.get("width_px", 15)),
+        60,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "edge_top_x1000",
+        CONTROL_WINDOW,
+        int(edge_cfg.get("height_top", 0.5) * 1000),
+        1000,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "edge_bot_x1000",
+        CONTROL_WINDOW,
+        int(edge_cfg.get("height_bot", 1.0) * 1000),
+        1000,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "edge_gain_x100",
+        CONTROL_WINDOW,
+        int(edge_cfg.get("gain", 0.4) * 100),
+        300,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "edge_thresh_x100",
+        CONTROL_WINDOW,
+        int(edge_cfg.get("thresh", 0.1) * 100),
+        200,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "edge_smooth_x100",
+        CONTROL_WINDOW,
+        int(edge_cfg.get("smooth_alpha", 0.2) * 100),
+        100,
+        lambda x: None,
+    )
+
     # 카메라 설정
     cam_cfg = hardware_cfg.get("camera", {})
     cv2.createTrackbar("brightness", CONTROL_WINDOW, int(cam_cfg.get("brightness", 0)), 200, lambda x: None)
@@ -203,6 +249,14 @@ def run(cfg, args) -> None:
     turn_offset_thresh = float(turn_cfg.get("offset_thresh", 0.3))
     turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
+    edge_cfg = control_cfg.get("edge", {})
+    edge_width_px = int(edge_cfg.get("width_px", 15))
+    edge_height_top = float(edge_cfg.get("height_top", 0.5))
+    edge_height_bot = float(edge_cfg.get("height_bot", 1.0))
+    edge_gain = float(edge_cfg.get("gain", 0.4))
+    edge_thresh = float(edge_cfg.get("thresh", 0.1))
+    edge_smooth_alpha = float(edge_cfg.get("smooth_alpha", 0.2))
+    edge_prev = 0.0
 
     if enable_sliders:
         create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg)
@@ -275,6 +329,12 @@ def run(cfg, args) -> None:
                 turn_offset_thresh = cv2.getTrackbarPos("turn_offset_thr_x100", CONTROL_WINDOW) / 100.0
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
+                edge_width_px = cv2.getTrackbarPos("edge_width_px", CONTROL_WINDOW)
+                edge_height_top = cv2.getTrackbarPos("edge_top_x1000", CONTROL_WINDOW) / 1000.0
+                edge_height_bot = cv2.getTrackbarPos("edge_bot_x1000", CONTROL_WINDOW) / 1000.0
+                edge_gain = cv2.getTrackbarPos("edge_gain_x100", CONTROL_WINDOW) / 100.0
+                edge_thresh = cv2.getTrackbarPos("edge_thresh_x100", CONTROL_WINDOW) / 100.0
+                edge_smooth_alpha = cv2.getTrackbarPos("edge_smooth_x100", CONTROL_WINDOW) / 100.0
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
@@ -292,6 +352,14 @@ def run(cfg, args) -> None:
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
             heading_norm, heading_centers = estimate_heading(binary)
+            edge_diff, left_black, right_black = edge_occupancy(
+                binary,
+                width_px=edge_width_px,
+                height_range=(edge_height_top, edge_height_bot),
+                smooth_alpha=edge_smooth_alpha,
+                prev_value=edge_prev,
+            )
+            edge_prev = edge_diff
             now = time.perf_counter()
             dt = now - last_time
             last_time = now
@@ -328,6 +396,12 @@ def run(cfg, args) -> None:
             controller.base_speed = effective_speed
             controller.steer_scale = effective_steer_scale
 
+            # 끝단 검정 비율 보조 바이어스
+            edge_bias = 0.0
+            if abs(edge_diff) >= edge_thresh:
+                edge_bias = edge_gain * edge_diff
+            steering_output += edge_bias
+
             if motors_enabled:
                 if state == "LOST":
                     controller.stop()
@@ -350,6 +424,7 @@ def run(cfg, args) -> None:
                     print(
                         f"err={error_norm if error_norm is not None else 'None'} "
                         f"state={state} heading={heading_norm if heading_norm is not None else 'None'} "
+                        f"edge={edge_diff:.2f} "
                         f"steer={steering_output:.2f} "
                         f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
                     )
@@ -366,6 +441,21 @@ def run(cfg, args) -> None:
                     fps,
                     heading=heading_norm,
                     centers=heading_centers,
+                    edge_boxes=[
+                        (
+                            0,
+                            int(edge_height_top * binary.shape[0]),
+                            edge_width_px,
+                            int(edge_height_bot * binary.shape[0]),
+                        ),
+                        (
+                            binary.shape[1] - edge_width_px,
+                            int(edge_height_top * binary.shape[0]),
+                            binary.shape[1],
+                            int(edge_height_bot * binary.shape[0]),
+                        ),
+                    ],
+                    edge_info=(edge_diff, left_black, right_black),
                 )
                 cv2.imshow("phase1/frame", frame_with_roi)
                 cv2.imshow("phase1/binary", debug_binary)

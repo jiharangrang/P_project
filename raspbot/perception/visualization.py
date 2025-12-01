@@ -17,6 +17,8 @@ def visualize_binary_debug(
     fps: Optional[float] = None,
     heading: Optional[float] = None,
     centers=None,
+    edge_boxes=None,
+    edge_info: Optional[Tuple[float, float, float]] = None,
 ):
     frame_color = cv2.cvtColor(binary_frame, cv2.COLOR_GRAY2BGR)
     h, w = frame_color.shape[:2]
@@ -141,5 +143,21 @@ def visualize_binary_debug(
         if len(centers) >= 2:
             for i in range(len(centers) - 1):
                 cv2.line(frame_color, centers[i], centers[i + 1], (0, 165, 255), 2)
+
+    if edge_boxes:
+        for (x0, y0, x1, y1) in edge_boxes:
+            cv2.rectangle(frame_color, (x0, y0), (x1, y1), (0, 255, 0), 2)
+
+    if edge_info:
+        edge_diff, left_ratio, right_ratio = edge_info
+        cv2.putText(
+            frame_color,
+            f"edge diff:{edge_diff:.2f} L:{left_ratio:.2f} R:{right_ratio:.2f}",
+            (10, 140),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (120, 255, 120),
+            1,
+        )
 
     return frame_color
