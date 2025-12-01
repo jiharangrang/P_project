@@ -146,7 +146,7 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
     cv2.createTrackbar(
         "edge_top_x1000",
         CONTROL_WINDOW,
-        int(edge_cfg.get("height_top", 0.5) * 1000),
+        int(edge_cfg.get("height_top", 0.0) * 1000),
         1000,
         lambda x: None,
     )
@@ -175,6 +175,30 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         "edge_smooth_x100",
         CONTROL_WINDOW,
         int(edge_cfg.get("smooth_alpha", 0.2) * 100),
+        100,
+        lambda x: None,
+    )
+
+    # heading 가중치
+    heading_cfg = control_cfg.get("heading", {})
+    cv2.createTrackbar(
+        "heading_gain_x100",
+        CONTROL_WINDOW,
+        int(heading_cfg.get("gain", 0.8) * 100),
+        300,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "heading_thresh_x100",
+        CONTROL_WINDOW,
+        int(heading_cfg.get("thresh", 0.05) * 100),
+        100,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "heading_smooth_x100",
+        CONTROL_WINDOW,
+        int(heading_cfg.get("smooth_alpha", 0.2) * 100),
         100,
         lambda x: None,
     )
@@ -251,12 +275,17 @@ def run(cfg, args) -> None:
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
     edge_cfg = control_cfg.get("edge", {})
     edge_width_px = int(edge_cfg.get("width_px", 15))
-    edge_height_top = float(edge_cfg.get("height_top", 0.5))
+    edge_height_top = float(edge_cfg.get("height_top", 0.0))
     edge_height_bot = float(edge_cfg.get("height_bot", 1.0))
     edge_gain = float(edge_cfg.get("gain", 0.4))
     edge_thresh = float(edge_cfg.get("thresh", 0.1))
     edge_smooth_alpha = float(edge_cfg.get("smooth_alpha", 0.2))
     edge_prev = 0.0
+    heading_cfg = control_cfg.get("heading", {})
+    heading_gain = float(heading_cfg.get("gain", 0.8))
+    heading_thresh = float(heading_cfg.get("thresh", 0.05))
+    heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
+    heading_prev = 0.0
 
     if enable_sliders:
         create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg)
@@ -335,6 +364,9 @@ def run(cfg, args) -> None:
                 edge_gain = cv2.getTrackbarPos("edge_gain_x100", CONTROL_WINDOW) / 100.0
                 edge_thresh = cv2.getTrackbarPos("edge_thresh_x100", CONTROL_WINDOW) / 100.0
                 edge_smooth_alpha = cv2.getTrackbarPos("edge_smooth_x100", CONTROL_WINDOW) / 100.0
+                heading_gain = cv2.getTrackbarPos("heading_gain_x100", CONTROL_WINDOW) / 100.0
+                heading_thresh = cv2.getTrackbarPos("heading_thresh_x100", CONTROL_WINDOW) / 100.0
+                heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
@@ -352,6 +384,11 @@ def run(cfg, args) -> None:
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
             heading_norm, heading_centers = estimate_heading(binary)
+            if heading_norm is not None:
+                heading_prev = heading_smooth_alpha * heading_norm + (1 - heading_smooth_alpha) * heading_prev
+                heading_used = heading_prev
+            else:
+                heading_used = None
             edge_diff, left_black, right_black = edge_occupancy(
                 binary,
                 width_px=edge_width_px,
@@ -370,6 +407,12 @@ def run(cfg, args) -> None:
             else:
                 steering_output = pid.update(error_norm, dt)
                 direction = "STRAIGHT"
+
+            # heading 기반 피드포워드
+            heading_term = 0.0
+            if heading_used is not None and abs(heading_used) >= heading_thresh:
+                heading_term = heading_gain * heading_used
+                steering_output += heading_term
 
             # 진행 상태 판별 (좌/우 회전/직진/길잃음)
             state = direction
@@ -425,6 +468,7 @@ def run(cfg, args) -> None:
                         f"err={error_norm if error_norm is not None else 'None'} "
                         f"state={state} heading={heading_norm if heading_norm is not None else 'None'} "
                         f"edge={edge_diff:.2f} "
+                        f"heading_term={heading_term:.2f} "
                         f"steer={steering_output:.2f} "
                         f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
                     )

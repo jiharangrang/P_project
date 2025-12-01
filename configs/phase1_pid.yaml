@@ -18,11 +18,11 @@ hardware:
 perception:
   roi_top: 871          # 0~1000 스케일
   roi_bottom: 946       # 0~1000 스케일
-  detect_value: 120     # HSV/그레이 임계값 기준
+  detect_value: 160     # HSV/그레이 임계값 기준
   ipm_resolution: [320, 240]
 
 control:
-  base_speed: 40        # 직진 기본 속도
+  base_speed: 20        # 직진 기본 속도
   speed_limit: 120      # 모터 포화 한계
   steer_limit: 80       # PID 출력 한계 (좌/우)
   steer_scale: 1.0
@@ -41,11 +41,17 @@ control:
   # 끝단(좌/우) 검정 비율 기반 보조 조향
   edge:
     width_px: 15           # 좌/우 끝 슬라이스 폭(px)
-    height_top: 0.50       # 슬라이스 상단 비율(0~1)
+    height_top: 0.00       # 슬라이스 상단 비율(0~1) - 전체 높이 사용
     height_bot: 1.00       # 슬라이스 하단 비율(0~1)
     gain: 0.40             # 끝단 바이어스 가중치
     thresh: 0.10           # 차이가 이 값 이상일 때만 적용
     smooth_alpha: 0.20     # EMA 계수(0이면 무필터)
+
+  # heading(주황선) 기반 조향 가중치
+  heading:
+    gain: 0.80             # 주황선 기울기 가중치 (양수=우측, 음수=좌측)
+    smooth_alpha: 0.20     # EMA로 부드럽게
+    thresh: 0.05           # 이 값 이상일 때만 적용
 
 runtime:
   show_windows: true
