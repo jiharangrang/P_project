@@ -109,6 +109,17 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
     cv2.createTrackbar("exposure", CONTROL_WINDOW, int(cam_cfg.get("exposure", 100)), 300, lambda x: None)
     cv2.createTrackbar("gain", CONTROL_WINDOW, int(cam_cfg.get("gain", 0)), 200, lambda x: None)
 
+    # 서보 각도 (카메라 앵글)
+    servo_defaults = hardware_cfg.get("servo_defaults", (70, 10))
+    cv2.createTrackbar("servo1_yaw", CONTROL_WINDOW, int(servo_defaults[0]), 180, lambda x: None)
+    cv2.createTrackbar(
+        "servo2_pitch",
+        CONTROL_WINDOW,
+        int(servo_defaults[1]),
+        int(RaspbotHardware.SERVO_PITCH_LIMIT),
+        lambda x: None,
+    )
+
 
 def run(cfg, args) -> None:
     hardware_cfg = cfg.get("hardware", {})
@@ -164,15 +175,21 @@ def run(cfg, args) -> None:
             int(hardware_cfg.get("camera", {}).get("exposure", 100)),
             int(hardware_cfg.get("camera", {}).get("gain", 0)),
         )
+        servo_defaults = tuple(hardware_cfg.get("servo_defaults", (70, 10)))
+        last_servo_angles = (
+            int(servo_defaults[0]),
+            int(min(servo_defaults[1], RaspbotHardware.SERVO_PITCH_LIMIT)),
+        )
 
     fps_timer = FpsTimer(window=int(runtime_cfg.get("fps_window", 15)))
 
     last_time = time.perf_counter()
+    motors_enabled = True
 
     print("=== Phase 1: 라인 추종 주행 시작 ===")
     print("키 입력:")
     print("  ESC/q : 프로그램 종료")
-    print("  s     : 모터만 정지 (프레임 처리 계속)")
+    print("  s     : 모터 토글 일시정지/재개 (영상/슬라이더 계속)")
     print("  SPACE : 일시정지 (아무 키나 누르면 재개)")
 
     try:
@@ -207,6 +224,14 @@ def run(cfg, args) -> None:
                     )
                     last_cam_settings = cam_settings
 
+                # 서보 각도 실시간 적용 (카메라 앵글)
+                servo1 = cv2.getTrackbarPos("servo1_yaw", CONTROL_WINDOW)
+                servo2 = cv2.getTrackbarPos("servo2_pitch", CONTROL_WINDOW)
+                if (servo1, servo2) != last_servo_angles:
+                    hardware.set_servo(1, servo1)
+                    hardware.set_servo(2, servo2)
+                    last_servo_angles = (servo1, servo2)
+
             frame = camera.read()
             height, width = frame.shape[:2]
 
@@ -225,12 +250,25 @@ def run(cfg, args) -> None:
             if error_norm is None:
                 direction = "STOP"
                 steering_output = 0.0
-                controller.stop()
-                if runtime_cfg.get("fail_safe_beep", True):
-                    hardware.beep(0.05)
             else:
                 steering_output = pid.update(error_norm, dt)
-                _, _, direction = controller.drive(steering_output)
+                direction = "UP"
+                if steering_output < -1e-3:
+                    direction = "LEFT"
+                elif steering_output > 1e-3:
+                    direction = "RIGHT"
+
+            if motors_enabled:
+                if error_norm is None:
+                    controller.stop()
+                    if runtime_cfg.get("fail_safe_beep", True):
+                        hardware.beep(0.05)
+                else:
+                    _, _, direction = controller.drive(steering_output)
+            else:
+                # 모터 일시정지 상태: 출력만 갱신, 실제 구동은 중단
+                controller.stop()
+                direction = "PAUSE"
 
             fps = fps_timer.lap()
 
@@ -255,9 +293,13 @@ def run(cfg, args) -> None:
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     break
-                elif key == ord("s"):  # 's' 키: 모터만 정지
+                elif key == ord("s"):  # 's' 키: 모터 토글
+                    motors_enabled = not motors_enabled
                     controller.stop()
-                    print("모터 정지 (프레임은 계속 처리됨)")
+                    if motors_enabled:
+                        print("모터 재개")
+                    else:
+                        print("모터 일시정지 (영상/슬라이더 계속)")
                 elif key == 32:  # 스페이스바: 일시정지
                     controller.stop()
                     print("일시정지. 아무 키나 누르면 재개...")
