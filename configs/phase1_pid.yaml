@@ -22,7 +22,7 @@ perception:
   ipm_resolution: [320, 240]
 
 control:
-  base_speed: 20        # 직진 기본 속도
+  base_speed: 15        # 직진 기본 속도
   speed_limit: 120      # 모터 포화 한계
   steer_limit: 80       # PID 출력 한계 (좌/우)
   steer_scale: 1.0
@@ -33,14 +33,13 @@ control:
 
   # 좌/우 턴 감지 및 제어 스케일
   turn:
-    slope_thresh: 0.25     # heading 기울기 임계
+    slope_thresh: 0.15     # heading 기울기 임계
     offset_thresh: 0.30    # 중심 오차 임계
     speed_scale: 0.70      # 턴 시 감속 계수
     steer_scale: 1.30      # 턴 시 조향 스케일 배율
 
   # heading(주황선) 기반 조향 가중치
   heading:
-    gain: 0.80             # 주황선 기울기 가중치 (양수=우측, 음수=좌측)
     smooth_alpha: 0.20     # EMA로 부드럽게
     thresh: 0.05           # 이 값 이상일 때만 적용
 

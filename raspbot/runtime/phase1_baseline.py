@@ -76,7 +76,7 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         "pid_kp_x100",
         CONTROL_WINDOW,
         int(float(control_cfg.get("kp", 0.9)) * 100),
-        500,
+        6000,
         lambda x: None,
     )
     cv2.createTrackbar(
@@ -90,7 +90,7 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         "pid_kd_x100",
         CONTROL_WINDOW,
         int(float(control_cfg.get("kd", 0.05)) * 100),
-        500,
+        6000,
         lambda x: None,
     )
     cv2.createTrackbar("base_speed", CONTROL_WINDOW, int(control_cfg.get("base_speed", 40)), 255, lambda x: None)
@@ -135,13 +135,6 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
 
     # heading 가중치
     heading_cfg = control_cfg.get("heading", {})
-    cv2.createTrackbar(
-        "heading_gain_x100",
-        CONTROL_WINDOW,
-        int(heading_cfg.get("gain", 0.8) * 100),
-        300,
-        lambda x: None,
-    )
     cv2.createTrackbar(
         "heading_thresh_x100",
         CONTROL_WINDOW,
@@ -228,7 +221,6 @@ def run(cfg, args) -> None:
     turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
     heading_cfg = control_cfg.get("heading", {})
-    heading_gain = float(heading_cfg.get("gain", 0.8))
     heading_thresh = float(heading_cfg.get("thresh", 0.05))
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
     heading_prev = 0.0
@@ -304,7 +296,6 @@ def run(cfg, args) -> None:
                 turn_offset_thresh = cv2.getTrackbarPos("turn_offset_thr_x100", CONTROL_WINDOW) / 100.0
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
-                heading_gain = cv2.getTrackbarPos("heading_gain_x100", CONTROL_WINDOW) / 100.0
                 heading_thresh = cv2.getTrackbarPos("heading_thresh_x100", CONTROL_WINDOW) / 100.0
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
             else:
@@ -323,9 +314,9 @@ def run(cfg, args) -> None:
             binary = detect_road_lines(warped, gray, detect_value)
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
-            heading_norm, heading_centers = estimate_heading(binary)
-            if heading_norm is not None:
-                heading_prev = heading_smooth_alpha * heading_norm + (1 - heading_smooth_alpha) * heading_prev
+            slope_norm, heading_centers, heading_offset = estimate_heading(binary)
+            if heading_offset is not None:
+                heading_prev = heading_smooth_alpha * heading_offset + (1 - heading_smooth_alpha) * heading_prev
                 heading_used = heading_prev
             else:
                 heading_used = None
@@ -333,28 +324,22 @@ def run(cfg, args) -> None:
             dt = now - last_time
             last_time = now
 
-            if error_norm is None:
+            if heading_used is None:
                 direction = "LOST"
                 steering_output = 0.0
             else:
-                steering_output = pid.update(error_norm, dt)
+                steering_output = pid.update(heading_used, dt)
                 direction = "STRAIGHT"
 
-            # heading 기반 피드포워드
-            heading_term = 0.0
-            if heading_used is not None and abs(heading_used) >= heading_thresh:
-                heading_term = heading_gain * heading_used
-                steering_output += heading_term
-
-            # 진행 상태 판별 (좌/우 회전/직진/길잃음)
+            # 진행 상태 판별 (좌/우 회전/직진/길잃음) - heading 기반
             state = direction
-            if error_norm is None:
+            if heading_used is None:
                 state = "LOST"
             else:
-                turn_by_heading = heading_norm is not None and abs(heading_norm) > turn_slope_thresh
-                turn_by_offset = abs(error_norm) > turn_offset_thresh
+                turn_by_heading = slope_norm is not None and abs(slope_norm) > turn_slope_thresh
+                turn_by_offset = abs(heading_used) > turn_offset_thresh
                 if turn_by_heading or turn_by_offset:
-                    if (heading_norm or error_norm) > 0:
+                    if heading_used > 0:
                         state = "TURN_RIGHT"
                     else:
                         state = "TURN_LEFT"
@@ -391,9 +376,9 @@ def run(cfg, args) -> None:
                 if hist_stats:
                     left_sum, center_sum, right_sum, left_ratio, center_ratio, right_ratio = hist_stats
                     print(
-                        f"err={error_norm if error_norm is not None else 'None'} "
-                        f"state={state} heading={heading_norm if heading_norm is not None else 'None'} "
-                        f"heading_term={heading_term:.2f} "
+                        f"heading_err={heading_used if heading_used is not None else 'None'} "
+                        f"slope={slope_norm if slope_norm is not None else 'None'} "
+                        f"state={state} "
                         f"steer={steering_output:.2f} "
                         f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
                     )
@@ -408,7 +393,9 @@ def run(cfg, args) -> None:
                     centroid_x,
                     steering_output,
                     fps,
-                    heading=heading_norm,
+                    heading=slope_norm,
+                    heading_offset=heading_used,
+                    turn_thresholds=(turn_slope_thresh, turn_offset_thresh),
                     centers=heading_centers,
                 )
                 cv2.imshow("phase1/frame", frame_with_roi)

@@ -16,6 +16,8 @@ def visualize_binary_debug(
     steering: Optional[float] = None,
     fps: Optional[float] = None,
     heading: Optional[float] = None,
+    heading_offset: Optional[float] = None,
+    turn_thresholds: Optional[Tuple[float, float]] = None,
     centers=None,
 ):
     frame_color = cv2.cvtColor(binary_frame, cv2.COLOR_GRAY2BGR)
@@ -75,6 +77,28 @@ def visualize_binary_debug(
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
             (180, 180, 255),
+            1,
+        )
+    if heading_offset is not None:
+        cv2.putText(
+            frame_color,
+            f"heading_off: {heading_offset:.2f}",
+            (10, 140),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (180, 220, 255),
+            1,
+        )
+
+    if turn_thresholds:
+        slope_thr, offset_thr = turn_thresholds
+        cv2.putText(
+            frame_color,
+            f"turn thr slope:{slope_thr:.2f} off:{offset_thr:.2f}",
+            (10, 160),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (150, 255, 150),
             1,
         )
 

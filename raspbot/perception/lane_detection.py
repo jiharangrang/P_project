@@ -90,7 +90,7 @@ def estimate_heading(
     binary_frame: np.ndarray,
     bands: Tuple[Tuple[float, float], ...] = ((0.15, 0.3), (0.45, 0.6), (0.75, 0.9)),
     weights: Optional[Tuple[float, ...]] = None,
-) -> Tuple[Optional[float], List[Tuple[int, int]]]:
+) -> Tuple[Optional[float], List[Tuple[int, int]], Optional[float]]:
     """
     여러 높이 구간에서 도로 중심을 추정해 진행 방향 기울기를 계산.
     weights로 상단(P1) 가중치를 더 줄 수 있음.
@@ -98,6 +98,7 @@ def estimate_heading(
     Returns:
         slope_norm: 하단 대비 상단 중심 이동량을 (-1~1)로 정규화한 값. 음수=좌, 양수=우.
         centers: 각 구간에서 구한 (x, y) 중심 좌표 리스트
+        top_offset_norm: 가중 상단 중심이 화면 중앙에서 얼마나 치우쳤는지 (-1~1)
     """
     h, w = binary_frame.shape[:2]
     road_mask = cv2.bitwise_not(binary_frame)
@@ -119,7 +120,10 @@ def estimate_heading(
         centers.append((cx, cy))
 
     if len(centers) < 2:
-        return None, centers
+        top_offset_norm = (
+            (centers[0][0] - (w / 2)) / (w / 2) if centers else None
+        )
+        return None, centers, top_offset_norm
 
     # 상단(P1) 가중치를 더 주기 위해 가중 평균 중심을 사용
     default_weights = (1.5, 1.0, 0.7)
@@ -135,4 +139,6 @@ def estimate_heading(
     slope_px = weighted_top - bottom_x
     slope_norm = slope_px / (w / 2)
     slope_norm = float(max(-1.0, min(1.0, slope_norm)))
-    return slope_norm, centers
+    top_offset_norm = (weighted_top - (w / 2)) / (w / 2)
+    top_offset_norm = float(max(-1.0, min(1.0, top_offset_norm)))
+    return slope_norm, centers, top_offset_norm
