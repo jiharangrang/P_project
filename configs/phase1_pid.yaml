@@ -1,0 +1,39 @@
+hardware:
+  use_led: true
+  use_beep: true
+  led_on_start: true
+  beep_on_start: true
+  led_mode: 2
+  servo_defaults: [70, 10]
+  servo_neutral: [90, 25]
+  camera:
+    index: 0
+    resolution: [320, 240]
+    brightness: 0
+    contrast: 0
+    saturation: 50
+    exposure: 100
+    gain: 0
+
+perception:
+  roi_top: 871          # 0~1000 스케일
+  roi_bottom: 946       # 0~1000 스케일
+  detect_value: 120     # HSV/그레이 임계값 기준
+  ipm_resolution: [320, 240]
+
+control:
+  base_speed: 40        # 직진 기본 속도
+  speed_limit: 120      # 모터 포화 한계
+  steer_limit: 80       # PID 출력 한계 (좌/우)
+  steer_scale: 1.0
+  steer_deadband: 0.0
+  kp: 45.0
+  ki: 0.0
+  kd: 8.0
+
+runtime:
+  show_windows: true
+  print_debug: true
+  fail_safe_beep: true
+  fps_window: 15
+  headless_delay: 0.02
