@@ -106,7 +106,10 @@ def run(cfg, args) -> None:
     last_time = time.perf_counter()
 
     print("=== Phase 1: 라인 추종 주행 시작 ===")
-    print("ESC 또는 q 입력 시 종료됩니다.")
+    print("키 입력:")
+    print("  ESC/q : 프로그램 종료")
+    print("  s     : 모터만 정지 (프레임 처리 계속)")
+    print("  SPACE : 일시정지 (아무 키나 누르면 재개)")
 
     try:
         while True:
@@ -158,6 +161,13 @@ def run(cfg, args) -> None:
                 key = cv2.waitKey(1) & 0xFF
                 if key in (27, ord("q")):
                     break
+                elif key == ord("s"):  # 's' 키: 모터만 정지
+                    controller.stop()
+                    print("모터 정지 (프레임은 계속 처리됨)")
+                elif key == 32:  # 스페이스바: 일시정지
+                    controller.stop()
+                    print("일시정지. 아무 키나 누르면 재개...")
+                    cv2.waitKey()  # 키 입력 대기
             else:
                 time.sleep(runtime_cfg.get("headless_delay", 0.01))
 
