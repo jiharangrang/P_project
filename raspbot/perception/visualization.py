@@ -15,6 +15,8 @@ def visualize_binary_debug(
     centroid_x: Optional[int],
     steering: Optional[float] = None,
     fps: Optional[float] = None,
+    heading: Optional[float] = None,
+    centers=None,
 ):
     frame_color = cv2.cvtColor(binary_frame, cv2.COLOR_GRAY2BGR)
     h, w = frame_color.shape[:2]
@@ -65,11 +67,22 @@ def visualize_binary_debug(
             1,
         )
 
+    if heading is not None:
+        cv2.putText(
+            frame_color,
+            f"heading: {heading:.2f}",
+            (10, 120),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (180, 180, 255),
+            1,
+        )
+
     if fps is not None:
         cv2.putText(
             frame_color,
             f"FPS: {fps:.1f}",
-            (w - 120, 30),
+            (w - 140, 30),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (255, 255, 255),
@@ -112,5 +125,21 @@ def visualize_binary_debug(
     if centroid_x is not None:
         cv2.line(frame_color, (centroid_x, 0), (centroid_x, h), (0, 255, 255), 2)
         cv2.circle(frame_color, (centroid_x, h // 2), 6, (0, 255, 255), -1)
+
+    if centers:
+        for idx, (cx, cy) in enumerate(centers):
+            cv2.circle(frame_color, (cx, cy), 5, (0, 165, 255), -1)
+            cv2.putText(
+                frame_color,
+                f"P{idx+1}",
+                (cx + 5, cy - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 165, 255),
+                1,
+            )
+        if len(centers) >= 2:
+            for i in range(len(centers) - 1):
+                cv2.line(frame_color, centers[i], centers[i + 1], (0, 165, 255), 2)
 
     return frame_color

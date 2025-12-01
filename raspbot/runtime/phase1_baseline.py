@@ -17,6 +17,7 @@ from raspbot.perception import (
     calculate_roi_points,
     compute_lane_error,
     detect_road_lines,
+    estimate_heading,
     visualize_binary_debug,
     warp_perspective,
 )
@@ -101,6 +102,37 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         lambda x: None,
     )
 
+    # 회전 감지 및 제어 스케일
+    turn_cfg = control_cfg.get("turn", {})
+    cv2.createTrackbar(
+        "turn_slope_thr_x100",
+        CONTROL_WINDOW,
+        int(float(turn_cfg.get("slope_thresh", 0.25)) * 100),
+        300,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "turn_offset_thr_x100",
+        CONTROL_WINDOW,
+        int(float(turn_cfg.get("offset_thresh", 0.3)) * 100),
+        300,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "turn_speed_scale_x100",
+        CONTROL_WINDOW,
+        int(float(turn_cfg.get("speed_scale", 0.7)) * 100),
+        100,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "turn_steer_scale_x100",
+        CONTROL_WINDOW,
+        int(float(turn_cfg.get("steer_scale", 1.3)) * 100),
+        300,
+        lambda x: None,
+    )
+
     # 카메라 설정
     cam_cfg = hardware_cfg.get("camera", {})
     cv2.createTrackbar("brightness", CONTROL_WINDOW, int(cam_cfg.get("brightness", 0)), 200, lambda x: None)
@@ -166,6 +198,12 @@ def run(cfg, args) -> None:
     detect_value = perception_cfg.get("detect_value", 120)
     ipm_resolution = tuple(perception_cfg.get("ipm_resolution", (320, 240)))
 
+    turn_cfg = control_cfg.get("turn", {})
+    turn_slope_thresh = float(turn_cfg.get("slope_thresh", 0.25))
+    turn_offset_thresh = float(turn_cfg.get("offset_thresh", 0.3))
+    turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
+    turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
+
     if enable_sliders:
         create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg)
         last_cam_settings = (
@@ -204,8 +242,8 @@ def run(cfg, args) -> None:
                 pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
                 pid.ki = cv2.getTrackbarPos("pid_ki_x100", CONTROL_WINDOW) / 100.0
                 pid.kd = cv2.getTrackbarPos("pid_kd_x100", CONTROL_WINDOW) / 100.0
-                controller.base_speed = cv2.getTrackbarPos("base_speed", CONTROL_WINDOW)
-                controller.steer_scale = cv2.getTrackbarPos("steer_scale_x100", CONTROL_WINDOW) / 100.0
+                base_speed_slider = cv2.getTrackbarPos("base_speed", CONTROL_WINDOW)
+                steer_scale_slider = cv2.getTrackbarPos("steer_scale_x100", CONTROL_WINDOW) / 100.0
 
                 # 카메라 설정 실시간 적용
                 brightness = cv2.getTrackbarPos("brightness", CONTROL_WINDOW)
@@ -232,6 +270,16 @@ def run(cfg, args) -> None:
                     hardware.set_servo(2, servo2)
                     last_servo_angles = (servo1, servo2)
 
+                # 회전 감지/제어 파라미터 업데이트
+                turn_slope_thresh = cv2.getTrackbarPos("turn_slope_thr_x100", CONTROL_WINDOW) / 100.0
+                turn_offset_thresh = cv2.getTrackbarPos("turn_offset_thr_x100", CONTROL_WINDOW) / 100.0
+                turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
+                turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
+            else:
+                # 슬라이더 미사용 시 기본 설정 유지
+                base_speed_slider = int(control_cfg.get("base_speed", 40))
+                steer_scale_slider = float(control_cfg.get("steer_scale", 1.0))
+
             frame = camera.read()
             height, width = frame.shape[:2]
 
@@ -243,32 +291,56 @@ def run(cfg, args) -> None:
             binary = detect_road_lines(warped, gray, detect_value)
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
+            heading_norm, heading_centers = estimate_heading(binary)
             now = time.perf_counter()
             dt = now - last_time
             last_time = now
 
             if error_norm is None:
-                direction = "STOP"
+                direction = "LOST"
                 steering_output = 0.0
             else:
                 steering_output = pid.update(error_norm, dt)
-                direction = "UP"
-                if steering_output < -1e-3:
-                    direction = "LEFT"
-                elif steering_output > 1e-3:
-                    direction = "RIGHT"
+                direction = "STRAIGHT"
+
+            # 진행 상태 판별 (좌/우 회전/직진/길잃음)
+            state = direction
+            if error_norm is None:
+                state = "LOST"
+            else:
+                turn_by_heading = heading_norm is not None and abs(heading_norm) > turn_slope_thresh
+                turn_by_offset = abs(error_norm) > turn_offset_thresh
+                if turn_by_heading or turn_by_offset:
+                    if (heading_norm or error_norm) > 0:
+                        state = "TURN_RIGHT"
+                    else:
+                        state = "TURN_LEFT"
+                else:
+                    state = "STRAIGHT"
+
+            # 상태별 속도/조향 스케일 조정
+            effective_speed = base_speed_slider
+            effective_steer_scale = steer_scale_slider
+            if state.startswith("TURN"):
+                effective_speed = int(base_speed_slider * turn_speed_scale)
+                effective_steer_scale = steer_scale_slider * turn_steer_scale
+
+            controller.base_speed = effective_speed
+            controller.steer_scale = effective_steer_scale
 
             if motors_enabled:
-                if error_norm is None:
+                if state == "LOST":
                     controller.stop()
                     if runtime_cfg.get("fail_safe_beep", True):
                         hardware.beep(0.05)
                 else:
-                    _, _, direction = controller.drive(steering_output)
+                    _, _, drive_dir = controller.drive(steering_output)
+                    direction = state if state != "STRAIGHT" else drive_dir
             else:
                 # 모터 일시정지 상태: 출력만 갱신, 실제 구동은 중단
                 controller.stop()
                 direction = "PAUSE"
+                state = "PAUSE"
 
             fps = fps_timer.lap()
 
@@ -277,6 +349,7 @@ def run(cfg, args) -> None:
                     left_sum, center_sum, right_sum, left_ratio, center_ratio, right_ratio = hist_stats
                     print(
                         f"err={error_norm if error_norm is not None else 'None'} "
+                        f"state={state} heading={heading_norm if heading_norm is not None else 'None'} "
                         f"steer={steering_output:.2f} "
                         f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
                     )
@@ -285,7 +358,14 @@ def run(cfg, args) -> None:
 
             if show_windows:
                 debug_binary = visualize_binary_debug(
-                    binary, direction, hist_stats, centroid_x, steering_output, fps
+                    binary,
+                    direction,
+                    hist_stats,
+                    centroid_x,
+                    steering_output,
+                    fps,
+                    heading=heading_norm,
+                    centers=heading_centers,
                 )
                 cv2.imshow("phase1/frame", frame_with_roi)
                 cv2.imshow("phase1/binary", debug_binary)

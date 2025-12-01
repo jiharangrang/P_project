@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -84,3 +84,44 @@ def compute_lane_error(
     histogram = np.sum(binary_frame, axis=0)
     histogram_stats = analyze_histogram(histogram)
     return error_norm, histogram, centroid_x, histogram_stats
+
+
+def estimate_heading(
+    binary_frame: np.ndarray,
+    bands: Tuple[Tuple[float, float], ...] = ((0.15, 0.3), (0.45, 0.6), (0.75, 0.9)),
+) -> Tuple[Optional[float], List[Tuple[int, int]]]:
+    """
+    여러 높이 구간에서 도로 중심을 추정해 진행 방향 기울기를 계산.
+
+    Returns:
+        slope_norm: 하단 대비 상단 중심 이동량을 (-1~1)로 정규화한 값. 음수=좌, 양수=우.
+        centers: 각 구간에서 구한 (x, y) 중심 좌표 리스트
+    """
+    h, w = binary_frame.shape[:2]
+    road_mask = cv2.bitwise_not(binary_frame)
+    centers: List[Tuple[int, int]] = []
+
+    for band in bands:
+        y0 = int(band[0] * h)
+        y1 = int(band[1] * h)
+        y0 = max(0, min(h - 1, y0))
+        y1 = max(0, min(h, y1))
+        if y1 <= y0:
+            continue
+        band_mask = road_mask[y0:y1, :]
+        m = cv2.moments(band_mask)
+        if m["m00"] < 1e-3:
+            continue
+        cx = int(m["m10"] / m["m00"])
+        cy = (y0 + y1) // 2
+        centers.append((cx, cy))
+
+    if len(centers) < 2:
+        return None, centers
+
+    bottom_x, _ = centers[-1]
+    top_x, _ = centers[0]
+    slope_px = top_x - bottom_x
+    slope_norm = slope_px / (w / 2)
+    slope_norm = float(max(-1.0, min(1.0, slope_norm)))
+    return slope_norm, centers
