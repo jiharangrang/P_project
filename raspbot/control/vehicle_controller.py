@@ -31,8 +31,9 @@ class VehicleController:
         if abs(steer) < self.deadband:
             steer = 0.0
 
-        left_speed = self.base_speed - steer
-        right_speed = self.base_speed + steer
+        # steer > 0: 오른쪽으로 돌기 위해 좌측 바퀴를 더 빠르게, 우측 바퀴를 더 느리게
+        left_speed = self.base_speed + steer
+        right_speed = self.base_speed - steer
 
         left_speed = self._clamp(left_speed, -self.speed_limit, self.speed_limit)
         right_speed = self._clamp(right_speed, -self.speed_limit, self.speed_limit)
