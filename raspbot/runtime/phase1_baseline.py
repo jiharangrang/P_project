@@ -23,6 +23,9 @@ from raspbot.perception import (
 from raspbot.utils import FpsTimer, load_config
 
 
+CONTROL_WINDOW = "phase1/controls"
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Phase1 라인 기반 자율주행 루프")
     parser.add_argument(
@@ -57,6 +60,56 @@ def build_camera(cfg) -> Camera:
     return Camera(camera_cfg)
 
 
+def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> None:
+    """실시간 조정을 위한 트랙바 UI 생성."""
+    cv2.namedWindow(CONTROL_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(CONTROL_WINDOW, 420, 480)
+
+    # ROI 및 바이너리 스레시홀드
+    cv2.createTrackbar("roi_top", CONTROL_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
+    cv2.createTrackbar("roi_bottom", CONTROL_WINDOW, int(perception_cfg.get("roi_bottom", 946)), 1000, lambda x: None)
+    cv2.createTrackbar("detect_value", CONTROL_WINDOW, int(perception_cfg.get("detect_value", 120)), 255, lambda x: None)
+
+    # PID 및 주행 속도
+    cv2.createTrackbar(
+        "pid_kp_x100",
+        CONTROL_WINDOW,
+        int(float(control_cfg.get("kp", 0.9)) * 100),
+        500,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "pid_ki_x100",
+        CONTROL_WINDOW,
+        int(float(control_cfg.get("ki", 0.0)) * 100),
+        200,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "pid_kd_x100",
+        CONTROL_WINDOW,
+        int(float(control_cfg.get("kd", 0.05)) * 100),
+        500,
+        lambda x: None,
+    )
+    cv2.createTrackbar("base_speed", CONTROL_WINDOW, int(control_cfg.get("base_speed", 40)), 255, lambda x: None)
+    cv2.createTrackbar(
+        "steer_scale_x100",
+        CONTROL_WINDOW,
+        int(float(control_cfg.get("steer_scale", 1.0)) * 100),
+        300,
+        lambda x: None,
+    )
+
+    # 카메라 설정
+    cam_cfg = hardware_cfg.get("camera", {})
+    cv2.createTrackbar("brightness", CONTROL_WINDOW, int(cam_cfg.get("brightness", 0)), 200, lambda x: None)
+    cv2.createTrackbar("contrast", CONTROL_WINDOW, int(cam_cfg.get("contrast", 0)), 200, lambda x: None)
+    cv2.createTrackbar("saturation", CONTROL_WINDOW, int(cam_cfg.get("saturation", 50)), 200, lambda x: None)
+    cv2.createTrackbar("exposure", CONTROL_WINDOW, int(cam_cfg.get("exposure", 100)), 300, lambda x: None)
+    cv2.createTrackbar("gain", CONTROL_WINDOW, int(cam_cfg.get("gain", 0)), 200, lambda x: None)
+
+
 def run(cfg, args) -> None:
     hardware_cfg = cfg.get("hardware", {})
     perception_cfg = cfg.get("perception", {})
@@ -64,6 +117,7 @@ def run(cfg, args) -> None:
     runtime_cfg = cfg.get("runtime", {})
 
     show_windows = runtime_cfg.get("show_windows", True) and not args.headless
+    enable_sliders = runtime_cfg.get("enable_sliders", True) and show_windows
 
     hardware = RaspbotHardware(
         use_led=hardware_cfg.get("use_led", True),
@@ -101,6 +155,16 @@ def run(cfg, args) -> None:
     detect_value = perception_cfg.get("detect_value", 120)
     ipm_resolution = tuple(perception_cfg.get("ipm_resolution", (320, 240)))
 
+    if enable_sliders:
+        create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg)
+        last_cam_settings = (
+            int(hardware_cfg.get("camera", {}).get("brightness", 0)),
+            int(hardware_cfg.get("camera", {}).get("contrast", 0)),
+            int(hardware_cfg.get("camera", {}).get("saturation", 50)),
+            int(hardware_cfg.get("camera", {}).get("exposure", 100)),
+            int(hardware_cfg.get("camera", {}).get("gain", 0)),
+        )
+
     fps_timer = FpsTimer(window=int(runtime_cfg.get("fps_window", 15)))
 
     last_time = time.perf_counter()
@@ -113,6 +177,36 @@ def run(cfg, args) -> None:
 
     try:
         while True:
+            if enable_sliders:
+                # ROI 및 검출 임계값 업데이트
+                roi_top = cv2.getTrackbarPos("roi_top", CONTROL_WINDOW)
+                roi_bottom = cv2.getTrackbarPos("roi_bottom", CONTROL_WINDOW)
+                detect_value = cv2.getTrackbarPos("detect_value", CONTROL_WINDOW)
+
+                # PID/속도 파라미터 업데이트 (trackbar는 정수이므로 스케일링)
+                pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
+                pid.ki = cv2.getTrackbarPos("pid_ki_x100", CONTROL_WINDOW) / 100.0
+                pid.kd = cv2.getTrackbarPos("pid_kd_x100", CONTROL_WINDOW) / 100.0
+                controller.base_speed = cv2.getTrackbarPos("base_speed", CONTROL_WINDOW)
+                controller.steer_scale = cv2.getTrackbarPos("steer_scale_x100", CONTROL_WINDOW) / 100.0
+
+                # 카메라 설정 실시간 적용
+                brightness = cv2.getTrackbarPos("brightness", CONTROL_WINDOW)
+                contrast = cv2.getTrackbarPos("contrast", CONTROL_WINDOW)
+                saturation = cv2.getTrackbarPos("saturation", CONTROL_WINDOW)
+                exposure = cv2.getTrackbarPos("exposure", CONTROL_WINDOW)
+                gain = cv2.getTrackbarPos("gain", CONTROL_WINDOW)
+                cam_settings = (brightness, contrast, saturation, exposure, gain)
+                if cam_settings != last_cam_settings:
+                    camera.apply_settings(
+                        brightness=brightness,
+                        contrast=contrast,
+                        saturation=saturation,
+                        exposure=exposure,
+                        gain=gain,
+                    )
+                    last_cam_settings = cam_settings
+
             frame = camera.read()
             height, width = frame.shape[:2]
 
