@@ -137,6 +137,7 @@ def estimate_heading(
         for cx, _ in centers
     ]
     prioritize_bottom = False
+    bottom_turn_boost = 1.0
     if len(offsets) >= 3:
         bottom_idx = len(offsets) - 1
         if offsets[0] * offsets[bottom_idx] < 0 and offsets[1] * offsets[bottom_idx] < 0:
@@ -144,6 +145,7 @@ def estimate_heading(
             use_weights[0] = 0.0
             use_weights[1] = 0.0
             use_weights[bottom_idx] = max(use_weights[bottom_idx], 4.0)
+            bottom_turn_boost = 1.5
 
     if not prioritize_bottom and len(offsets) >= 2:
         near_avg = sum(offsets[1:]) / len(offsets[1:])
@@ -161,5 +163,5 @@ def estimate_heading(
     slope_norm = slope_px / (w / 2)
     slope_norm = float(max(-1.0, min(1.0, slope_norm)))
     top_offset_norm = (weighted_top - (w / 2)) / (w / 2)
-    top_offset_norm = float(max(-1.0, min(1.0, top_offset_norm)))
+    top_offset_norm = float(max(-1.0, min(1.0, top_offset_norm * bottom_turn_boost)))
     return slope_norm, centers, top_offset_norm
