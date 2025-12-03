@@ -136,7 +136,16 @@ def estimate_heading(
         (cx - (w / 2)) / (w / 2)
         for cx, _ in centers
     ]
-    if len(offsets) >= 2:
+    prioritize_bottom = False
+    if len(offsets) >= 3:
+        bottom_idx = len(offsets) - 1
+        if offsets[0] * offsets[bottom_idx] < 0 and offsets[1] * offsets[bottom_idx] < 0:
+            prioritize_bottom = True
+            use_weights[0] = 0.0
+            use_weights[1] = 0.0
+            use_weights[bottom_idx] = max(use_weights[bottom_idx], 2.0)
+
+    if not prioritize_bottom and len(offsets) >= 2:
         near_avg = sum(offsets[1:]) / len(offsets[1:])
         if offsets[0] * near_avg < 0:  # 중앙선 기준 반대 방향
             use_weights[0] = 0.0
