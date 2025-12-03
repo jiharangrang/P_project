@@ -127,7 +127,7 @@ def estimate_heading(
 
     # 상단(P1) 가중치를 더 주기 위해 가중 평균 중심을 사용하되,
     # P1과 P2/P3가 중앙선 기준 반대 방향이면 P1 가중치를 0으로 둬 가까운 밴드를 우선한다.
-    default_weights = (1.5, 1.0, 0.7)
+    default_weights = (1.8, 1.2, 0.7)
     use_weights = list(weights) if weights else list(default_weights[: len(centers)])
     if len(use_weights) < len(centers):
         use_weights += [use_weights[-1]] * (len(centers) - len(use_weights))
@@ -143,14 +143,14 @@ def estimate_heading(
             prioritize_bottom = True
             use_weights[0] = 0.0
             use_weights[1] = 0.0
-            use_weights[bottom_idx] = max(use_weights[bottom_idx], 2.0)
+            use_weights[bottom_idx] = max(use_weights[bottom_idx], 4.0)
 
     if not prioritize_bottom and len(offsets) >= 2:
         near_avg = sum(offsets[1:]) / len(offsets[1:])
         if offsets[0] * near_avg < 0:  # 중앙선 기준 반대 방향
             use_weights[0] = 0.0
             for i in range(1, len(use_weights)):
-                use_weights[i] = max(use_weights[i], 1.2)
+                use_weights[i] = max(use_weights[i], 1.5)
 
     bottom_x, _ = centers[-1]
     weighted_top = sum(cx * w for (cx, _), w in zip(centers, use_weights)) / sum(
