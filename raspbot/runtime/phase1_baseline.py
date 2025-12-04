@@ -100,6 +100,20 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         300,
         lambda x: None,
     )
+    cv2.createTrackbar(
+        "steer_limit",
+        CONTROL_WINDOW,
+        int(control_cfg.get("steer_limit", 80)),
+        255,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "speed_limit",
+        CONTROL_WINDOW,
+        int(control_cfg.get("speed_limit", 120)),
+        255,
+        lambda x: None,
+    )
 
     # 회전 감지 및 제어 스케일
     turn_cfg = control_cfg.get("turn", {})
@@ -212,6 +226,8 @@ def run(cfg, args) -> None:
     turn_offset_thresh = float(turn_cfg.get("offset_thresh", 0.3))
     turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
+    steer_limit_cfg = float(control_cfg.get("steer_limit", 80))
+    speed_limit_cfg = int(control_cfg.get("speed_limit", 120))
     heading_cfg = control_cfg.get("heading", {})
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
     heading_prev = 0.0
@@ -288,10 +304,14 @@ def run(cfg, args) -> None:
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
+                steer_limit_slider = max(1.0, float(cv2.getTrackbarPos("steer_limit", CONTROL_WINDOW)))
+                speed_limit_slider = int(cv2.getTrackbarPos("speed_limit", CONTROL_WINDOW))
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
                 steer_scale_slider = float(control_cfg.get("steer_scale", 1.0))
+                steer_limit_slider = steer_limit_cfg
+                speed_limit_slider = speed_limit_cfg
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -320,6 +340,11 @@ def run(cfg, args) -> None:
             else:
                 steering_output = pid.update(heading_used, dt)
                 direction = "STRAIGHT"
+
+            # PID/속도 한계 실시간 업데이트 (슬라이더/기본값)
+            pid.min_output = -float(steer_limit_slider)
+            pid.max_output = float(steer_limit_slider)
+            controller.speed_limit = int(speed_limit_slider)
 
             # 진행 상태 판별 (좌/우 회전/직진/길잃음) - heading 기반
             state = direction
