@@ -41,7 +41,6 @@ control:
   # heading(주황선) 기반 조향 가중치
   heading:
     smooth_alpha: 0.20     # EMA로 부드럽게
-    thresh: 0.01           # 이 값 이상일 때만 적용
 
 runtime:
   show_windows: true

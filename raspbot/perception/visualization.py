@@ -11,7 +11,6 @@ import numpy as np
 def visualize_binary_debug(
     binary_frame: np.ndarray,
     direction: str,
-    histogram_stats: Optional[Tuple[int, int, int, float, float, float]],
     centroid_x: Optional[int],
     steering: Optional[float] = None,
     fps: Optional[float] = None,
@@ -37,26 +36,9 @@ def visualize_binary_debug(
         2,
     )
 
-    if histogram_stats:
-        left_sum, center_sum, right_sum, left_ratio, center_ratio, right_ratio = histogram_stats
-        cv2.putText(
-            frame_color,
-            f"L:{left_sum:6d} C:{center_sum:6d} R:{right_sum:6d}",
-            (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (255, 255, 255),
-            1,
-        )
-        cv2.putText(
-            frame_color,
-            f"ratio L:{left_ratio:.2f} C:{center_ratio:.2f} R:{right_ratio:.2f}",
-            (10, 80),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (180, 180, 180),
-            1,
-        )
+    # 화면 중앙 기준선(고정)
+    center_x = w // 2
+    cv2.line(frame_color, (center_x, 0), (center_x, h), (0, 255, 255), 1)
 
     if steering is not None:
         cv2.putText(
@@ -112,11 +94,6 @@ def visualize_binary_debug(
             (255, 255, 255),
             1,
         )
-
-    left_line = w // 3
-    right_line = 2 * w // 3
-    cv2.line(frame_color, (left_line, 0), (left_line, h), (255, 0, 0), 2)
-    cv2.line(frame_color, (right_line, 0), (right_line, h), (255, 0, 0), 2)
 
     cv2.putText(
         frame_color,

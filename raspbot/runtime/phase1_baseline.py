@@ -12,7 +12,6 @@ import cv2
 from raspbot.control import PIDController, VehicleController
 from raspbot.hardware import Camera, CameraConfig, RaspbotHardware
 from raspbot.perception import (
-    analyze_histogram,
     apply_roi_overlay,
     calculate_roi_points,
     compute_lane_error,
@@ -136,13 +135,6 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
     # heading 가중치
     heading_cfg = control_cfg.get("heading", {})
     cv2.createTrackbar(
-        "heading_thresh_x100",
-        CONTROL_WINDOW,
-        int(heading_cfg.get("thresh", 0.05) * 100),
-        100,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
         "heading_smooth_x100",
         CONTROL_WINDOW,
         int(heading_cfg.get("smooth_alpha", 0.2) * 100),
@@ -221,7 +213,6 @@ def run(cfg, args) -> None:
     turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
     heading_cfg = control_cfg.get("heading", {})
-    heading_thresh = float(heading_cfg.get("thresh", 0.05))
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
     heading_prev = 0.0
 
@@ -296,7 +287,6 @@ def run(cfg, args) -> None:
                 turn_offset_thresh = cv2.getTrackbarPos("turn_offset_thr_x100", CONTROL_WINDOW) / 100.0
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
-                heading_thresh = cv2.getTrackbarPos("heading_thresh_x100", CONTROL_WINDOW) / 100.0
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
@@ -313,7 +303,7 @@ def run(cfg, args) -> None:
             gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
             binary = detect_road_lines(warped, gray, detect_value)
 
-            error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
+            centroid_x = compute_lane_error(binary)
             slope_norm, heading_centers, heading_offset = estimate_heading(binary)
             if heading_offset is not None:
                 heading_prev = heading_smooth_alpha * heading_offset + (1 - heading_smooth_alpha) * heading_prev
@@ -373,23 +363,17 @@ def run(cfg, args) -> None:
             fps = fps_timer.lap()
 
             if runtime_cfg.get("print_debug", False):
-                if hist_stats:
-                    left_sum, center_sum, right_sum, left_ratio, center_ratio, right_ratio = hist_stats
-                    print(
-                        f"heading_err={heading_used if heading_used is not None else 'None'} "
-                        f"slope={slope_norm if slope_norm is not None else 'None'} "
-                        f"state={state} "
-                        f"steer={steering_output:.2f} "
-                        f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
-                    )
-                else:
-                    print("라인이 보이지 않습니다. STOP 상태 유지.")
+                print(
+                    f"heading_err={heading_used if heading_used is not None else 'None'} "
+                    f"slope={slope_norm if slope_norm is not None else 'None'} "
+                    f"state={state} "
+                    f"steer={steering_output:.2f}"
+                )
 
             if show_windows:
                 debug_binary = visualize_binary_debug(
                     binary,
                     direction,
-                    hist_stats,
                     centroid_x,
                     steering_output,
                     fps,
