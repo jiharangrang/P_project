@@ -127,7 +127,7 @@ def estimate_heading(
 
     # 상단(P1) 가중치를 더 주기 위해 가중 평균 중심을 사용하되,
     # P1과 P2/P3가 중앙선 기준 반대 방향이면 P1 가중치를 0으로 둬 가까운 밴드를 우선한다.
-    default_weights = (1.8, 1.2, 0.7)
+    default_weights = (1.8, 1.5, 0.9)
     use_weights = list(weights) if weights else list(default_weights[: len(centers)])
     if len(use_weights) < len(centers):
         use_weights += [use_weights[-1]] * (len(centers) - len(use_weights))
