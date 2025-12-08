@@ -22,7 +22,8 @@ perception:
   lab_red_l_min: 30     # Lab 빨간선 최소 L
   lab_red_a_min: 150    # Lab 빨간선 최소 a
   lab_red_b_min: 140    # Lab 빨간선 최소 b
-  lab_gray_chroma_thr: 15  # 회색 선 크로마 최대 허용(|a-128|, |b-128|의 최대값)
+  lab_gray_a_dev: 15    # 회색 선 a 허용 편차 |a-128|
+  lab_gray_b_dev: 15    # 회색 선 b 허용 편차 |b-128|
   ipm_resolution: [320, 240]
 
 control:

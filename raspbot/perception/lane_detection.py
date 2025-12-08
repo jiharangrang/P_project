@@ -14,7 +14,8 @@ def detect_road_lines(
     red_l_min: int,
     red_a_min: int,
     red_b_min: int,
-    gray_chroma_thr: int,
+    gray_a_dev: int,
+    gray_b_dev: int,
 ) -> np.ndarray:
     """
     Lab 색공간으로 빨간/회색 차선을 검출한 이진 이미지를 반환.
@@ -22,7 +23,7 @@ def detect_road_lines(
     Args:
         detect_value: L 채널 밝기 임계값(회색/밝은 선)
         red_l_min / red_a_min / red_b_min: 빨간선 최소 L/a/b 임계
-        gray_chroma_thr: 회색 선을 위한 크로마 한계(|a-128|, |b-128|의 최대 허용치)
+        gray_a_dev / gray_b_dev: 회색 선을 위한 a/b 허용 편차(|a-128|, |b-128|)
     """
     lab_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2Lab)
     L, A, B = cv2.split(lab_frame)
@@ -37,10 +38,13 @@ def detect_road_lines(
     # 회색/밝은 선: 높은 L, 낮은 크로마(무채색 근처)
     l_threshold = max(int(detect_value), 0)
     _, bright_mask = cv2.threshold(L, l_threshold, 255, cv2.THRESH_BINARY)
-    chroma_dist = cv2.max(cv2.absdiff(A, 128), cv2.absdiff(B, 128))
-    _, low_chroma_mask = cv2.threshold(
-        chroma_dist, int(gray_chroma_thr), 255, cv2.THRESH_BINARY_INV
+    _, mask_a = cv2.threshold(
+        cv2.absdiff(A, 128), int(gray_a_dev), 255, cv2.THRESH_BINARY_INV
     )
+    _, mask_b = cv2.threshold(
+        cv2.absdiff(B, 128), int(gray_b_dev), 255, cv2.THRESH_BINARY_INV
+    )
+    low_chroma_mask = cv2.bitwise_and(mask_a, mask_b)
     mask_gray = cv2.bitwise_and(bright_mask, low_chroma_mask)
 
     mask_lines = cv2.bitwise_or(red_mask, mask_gray)

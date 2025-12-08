@@ -92,9 +92,16 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         lambda x: None,
     )
     cv2.createTrackbar(
-        "lab_gray_chroma_thr",
+        "lab_gray_a_dev",
         CONTROL_WINDOW,
-        int(perception_cfg.get("lab_gray_chroma_thr", 15)),
+        int(perception_cfg.get("lab_gray_a_dev", 15)),
+        128,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "lab_gray_b_dev",
+        CONTROL_WINDOW,
+        int(perception_cfg.get("lab_gray_b_dev", 15)),
         128,
         lambda x: None,
     )
@@ -299,7 +306,8 @@ def run(cfg, args) -> None:
                 lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", CONTROL_WINDOW)
                 lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", CONTROL_WINDOW)
                 lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
-                lab_gray_chroma_thr = cv2.getTrackbarPos("lab_gray_chroma_thr", CONTROL_WINDOW)
+                lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", CONTROL_WINDOW)
+                lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", CONTROL_WINDOW)
 
                 # PID/속도 파라미터 업데이트 (trackbar는 정수이므로 스케일링)
                 pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
@@ -349,7 +357,8 @@ def run(cfg, args) -> None:
                 lab_red_l_min = int(perception_cfg.get("lab_red_l_min", 30))
                 lab_red_a_min = int(perception_cfg.get("lab_red_a_min", 150))
                 lab_red_b_min = int(perception_cfg.get("lab_red_b_min", 140))
-                lab_gray_chroma_thr = int(perception_cfg.get("lab_gray_chroma_thr", 15))
+                lab_gray_a_dev = int(perception_cfg.get("lab_gray_a_dev", 15))
+                lab_gray_b_dev = int(perception_cfg.get("lab_gray_b_dev", 15))
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -364,7 +373,8 @@ def run(cfg, args) -> None:
                 lab_red_l_min,
                 lab_red_a_min,
                 lab_red_b_min,
-                lab_gray_chroma_thr,
+                lab_gray_a_dev,
+                lab_gray_b_dev,
             )
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
