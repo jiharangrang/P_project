@@ -244,6 +244,7 @@ def run(cfg, args) -> None:
 
     last_time = time.perf_counter()
     motors_enabled = True
+    motors_was_enabled = motors_enabled
 
     print("=== Phase 1: 라인 추종 주행 시작 ===")
     print("키 입력:")
@@ -365,14 +366,15 @@ def run(cfg, args) -> None:
                     _, _, drive_dir = controller.drive(steering_output)
                     direction = state if state != "STRAIGHT" else drive_dir
             else:
-                # 모터 일시정지 상태: 출력만 갱신, 실제 구동은 중단
-                controller.stop()
+                # 모터 일시정지 상태: 최초 전환 시에만 모터 정지 명령 전달
+                if motors_was_enabled:
+                    controller.stop()
                 direction = "PAUSE"
                 state = "PAUSE"
 
             fps = fps_timer.lap()
 
-            if runtime_cfg.get("print_debug", False):
+            if runtime_cfg.get("print_debug", False) and motors_enabled:
                 if hist_stats:
                     left_sum, center_sum, right_sum, left_ratio, center_ratio, right_ratio = hist_stats
                     print(
@@ -417,6 +419,7 @@ def run(cfg, args) -> None:
                     cv2.waitKey()  # 키 입력 대기
             else:
                 time.sleep(runtime_cfg.get("headless_delay", 0.01))
+            motors_was_enabled = motors_enabled
 
     finally:
         controller.stop()
