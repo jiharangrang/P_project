@@ -178,13 +178,6 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
     # heading 가중치
     heading_cfg = control_cfg.get("heading", {})
     cv2.createTrackbar(
-        "heading_thresh_x100",
-        CONTROL_WINDOW,
-        int(heading_cfg.get("thresh", 0.05) * 100),
-        100,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
         "heading_smooth_x100",
         CONTROL_WINDOW,
         int(heading_cfg.get("smooth_alpha", 0.2) * 100),
@@ -265,9 +258,10 @@ def run(cfg, args) -> None:
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
     turn_inner_min_speed = int(turn_cfg.get("inner_min_speed", 0))
     heading_cfg = control_cfg.get("heading", {})
-    heading_thresh = float(heading_cfg.get("thresh", 0.05))
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
-    heading_p3_tol = float(heading_cfg.get("p3_opposite_tol", 0.05))
+    heading_connect_close_px = int(heading_cfg.get("connect_close_px", 1))
+    heading_merge_gap_px = int(heading_cfg.get("merge_gap_px", 1))
+    heading_p1_margin_px = int(heading_cfg.get("p1_margin_px", 1))
     heading_prev = 0.0
 
     if enable_sliders:
@@ -288,13 +282,14 @@ def run(cfg, args) -> None:
     fps_timer = FpsTimer(window=int(runtime_cfg.get("fps_window", 15)))
 
     last_time = time.perf_counter()
-    motors_enabled = True
+    motors_enabled = False
     motors_was_enabled = motors_enabled
+    controller.stop()
 
     print("=== Phase 1: 라인 추종 주행 시작 ===")
     print("키 입력:")
     print("  ESC/q : 프로그램 종료")
-    print("  s     : 모터 토글 일시정지/재개 (영상/슬라이더 계속)")
+    print("  s     : 주행 시작/일시정지 토글 (초기 상태: 정지)")
     print("  SPACE : 일시정지 (아무 키나 누르면 재개)")
 
     try:
@@ -348,7 +343,6 @@ def run(cfg, args) -> None:
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_inner_min_speed = cv2.getTrackbarPos("turn_inner_min_speed", CONTROL_WINDOW)
-                heading_thresh = cv2.getTrackbarPos("heading_thresh_x100", CONTROL_WINDOW) / 100.0
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
@@ -378,9 +372,12 @@ def run(cfg, args) -> None:
                 lab_gray_b_dev,
             )
 
-            error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
+            _, histogram, centroid_x, hist_stats = compute_lane_error(binary)
             slope_norm, heading_centers, heading_offset = estimate_heading(
-                binary, bottom_opposite_tol=heading_p3_tol
+                binary,
+                connect_close_px=heading_connect_close_px,
+                merge_gap_px=heading_merge_gap_px,
+                p1_margin_px=heading_p1_margin_px,
             )
             if heading_offset is not None:
                 heading_prev = heading_smooth_alpha * heading_offset + (1 - heading_smooth_alpha) * heading_prev

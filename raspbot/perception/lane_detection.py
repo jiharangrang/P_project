@@ -49,7 +49,7 @@ def detect_road_lines(
 
     mask_lines = cv2.bitwise_or(red_mask, mask_gray)
 
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = np.ones((5, 5), np.uint8)
     mask_lines = cv2.morphologyEx(mask_lines, cv2.MORPH_CLOSE, kernel)
     mask_lines = cv2.morphologyEx(mask_lines, cv2.MORPH_OPEN, kernel)
     return mask_lines
@@ -107,14 +107,15 @@ def compute_lane_error(
 
 def estimate_heading(
     binary_frame: np.ndarray,
-    bands: Tuple[Tuple[float, float], ...] = ((0.0, 0.3), (0.45, 0.6), (0.75, 0.9)),
+    bands: Tuple[Tuple[float, float], ...] = ((0.15, 0.3), (0.45, 0.6), (0.75, 0.9)),
     weights: Optional[Tuple[float, ...]] = None,
-    bottom_opposite_tol: float = 0.05,
+    connect_close_px: int = 1,
+    merge_gap_px: int = 1,
+    p1_margin_px: int = 1,
 ) -> Tuple[Optional[float], List[Tuple[int, int]], Optional[float]]:
     """
     여러 높이 구간에서 도로 중심을 추정해 진행 방향 기울기를 계산.
-    weights로 상단(P1) 가중치를 더 줄 수 있음.
-    bottom_opposite_tol로 P3가 중앙 근처에서 약간 반대 부호일 때는 무시해 상단 정보가 완전히 사라지는 것을 방지.
+    p2/p3가 포함된 동일(또는 근접) 컴포넌트만 남겨 p1이 튀는 것을 막는다.
 
     Returns:
         slope_norm: 하단 대비 상단 중심 이동량을 (-1~1)로 정규화한 값. 음수=좌, 양수=우.
@@ -123,8 +124,12 @@ def estimate_heading(
     """
     h, w = binary_frame.shape[:2]
     road_mask = cv2.bitwise_not(binary_frame)
-    centers: List[Tuple[int, int]] = []
 
+    close_ksize = max(1, 2 * connect_close_px + 1)
+    close_kernel = np.ones((close_ksize, close_ksize), np.uint8)
+    road_mask = cv2.morphologyEx(road_mask, cv2.MORPH_CLOSE, close_kernel)
+
+    band_ranges: List[Tuple[int, int]] = []
     for band in bands:
         y0 = int(band[0] * h)
         y1 = int(band[1] * h)
@@ -132,13 +137,82 @@ def estimate_heading(
         y1 = max(0, min(h, y1))
         if y1 <= y0:
             continue
-        band_mask = road_mask[y0:y1, :]
-        m = cv2.moments(band_mask)
-        if m["m00"] < 1e-3:
-            continue
-        cx = int(m["m10"] / m["m00"])
-        cy = (y0 + y1) // 2
-        centers.append((cx, cy))
+        band_ranges.append((y0, y1))
+
+    def calc_centers(mask: np.ndarray) -> Tuple[List[Tuple[int, int]], List[Tuple[int, Tuple[int, int]]]]:
+        pts: List[Tuple[int, int]] = []
+        meta: List[Tuple[int, Tuple[int, int]]] = []
+        for idx, (y0, y1) in enumerate(band_ranges):
+            band_mask = mask[y0:y1, :]
+            m = cv2.moments(band_mask)
+            if m["m00"] < 1e-3:
+                continue
+            cx = int(m["m10"] / m["m00"])
+            cy = (y0 + y1) // 2
+            pts.append((cx, cy))
+            meta.append((idx, (cx, cy)))
+        return pts, meta
+
+    _, centers_meta = calc_centers(road_mask)
+
+    labels = None
+    try:
+        _, labels, _, _ = cv2.connectedComponentsWithStats(road_mask, connectivity=8)
+    except cv2.error:
+        labels = None
+
+    merge_ksize = max(3, 2 * merge_gap_px + 1)
+    merge_kernel = np.ones((merge_ksize, merge_ksize), np.uint8)
+
+    def get_label(pt: Tuple[int, int]) -> Optional[int]:
+        if labels is None:
+            return None
+        x, y = pt
+        if x < 0 or x >= w or y < 0 or y >= h:
+            return None
+        return int(labels[y, x])
+
+    def find_band_meta(band_idx: int) -> Optional[Tuple[int, Tuple[int, int]]]:
+        for idx, pt in centers_meta:
+            if idx == band_idx:
+                return idx, pt
+        return None
+
+    p2_meta = find_band_meta(1)
+    p3_meta = find_band_meta(2)
+
+    target_mask = road_mask
+    if labels is not None and p2_meta and p3_meta:
+        _, p2_pt = p2_meta
+        _, p3_pt = p3_meta
+        p2_label = get_label(p2_pt)
+        p3_label = get_label(p3_pt)
+
+        selected_mask = None
+        if p2_label and p3_label and p2_label > 0 and p3_label > 0:
+            if p2_label == p3_label:
+                selected_mask = (labels == p2_label).astype(np.uint8) * 255
+            else:
+                p2_mask = (labels == p2_label).astype(np.uint8) * 255
+                p3_mask = (labels == p3_label).astype(np.uint8) * 255
+                overlap = cv2.bitwise_and(
+                    cv2.dilate(p2_mask, merge_kernel, iterations=1),
+                    cv2.dilate(p3_mask, merge_kernel, iterations=1),
+                )
+                if np.any(overlap):
+                    merged_mask = cv2.bitwise_or(p2_mask, p3_mask)
+                    merged_mask = cv2.morphologyEx(merged_mask, cv2.MORPH_CLOSE, merge_kernel)
+                    selected_mask = merged_mask
+
+        if selected_mask is not None:
+            target_mask = selected_mask
+
+    if p1_margin_px > 0:
+        margin_ksize = max(1, 2 * p1_margin_px + 1)
+        margin_kernel = np.ones((margin_ksize, margin_ksize), np.uint8)
+        target_mask = cv2.dilate(target_mask, margin_kernel, iterations=1)
+
+    centers, _ = calc_centers(target_mask)
 
     if len(centers) < 2:
         top_offset_norm = (
@@ -146,40 +220,10 @@ def estimate_heading(
         )
         return None, centers, top_offset_norm
 
-    # 상단(P1) 가중치를 더 주기 위해 가중 평균 중심을 사용하되,
-    # P1과 P2/P3가 중앙선 기준 반대 방향이면 P1 가중치를 0으로 둬 가까운 밴드를 우선한다.
     default_weights = (1.8, 1.2, 0.7)
     use_weights = list(weights) if weights else list(default_weights[: len(centers)])
     if len(use_weights) < len(centers):
         use_weights += [use_weights[-1]] * (len(centers) - len(use_weights))
-
-    offsets = [
-        (cx - (w / 2)) / (w / 2)
-        for cx, _ in centers
-    ]
-    prioritize_bottom = False
-    bottom_turn_boost = 1.0
-    if len(offsets) >= 3:
-        bottom_idx = len(offsets) - 1
-        bottom_mag = abs(offsets[bottom_idx])
-        far_enough = bottom_mag >= max(0.0, bottom_opposite_tol)
-        if (
-            far_enough
-            and offsets[0] * offsets[bottom_idx] < 0
-            and offsets[1] * offsets[bottom_idx] < 0
-        ):
-            prioritize_bottom = True
-            use_weights[0] = 0.0
-            use_weights[1] = 0.0
-            use_weights[bottom_idx] = max(use_weights[bottom_idx], 4.0)
-            bottom_turn_boost = 1.5
-
-    if not prioritize_bottom and len(offsets) >= 2:
-        near_avg = sum(offsets[1:]) / len(offsets[1:])
-        if abs(offsets[0]) >= max(0.0, bottom_opposite_tol) and offsets[0] * near_avg < 0:  # 중앙선 기준 반대 방향
-            use_weights[0] = 0.0
-            for i in range(1, len(use_weights)):
-                use_weights[i] = max(use_weights[i], 1.5)
 
     bottom_x, _ = centers[-1]
     weighted_top = sum(cx * w for (cx, _), w in zip(centers, use_weights)) / sum(
@@ -190,5 +234,5 @@ def estimate_heading(
     slope_norm = slope_px / (w / 2)
     slope_norm = float(max(-1.0, min(1.0, slope_norm)))
     top_offset_norm = (weighted_top - (w / 2)) / (w / 2)
-    top_offset_norm = float(max(-1.0, min(1.0, top_offset_norm * bottom_turn_boost)))
+    top_offset_norm = float(max(-1.0, min(1.0, top_offset_norm)))
     return slope_norm, centers, top_offset_norm

@@ -47,8 +47,9 @@ control:
   # heading(주황선) 기반 조향 가중치
   heading:
     smooth_alpha: 0.80     # EMA로 부드럽게
-    thresh: 0.01           # 이 값 이상일 때만 적용
-    p3_opposite_tol: 0.05  # P3가 중앙에서 이 값보다 작게 반대일 때는 상단 가중치 제거 로직을 적용하지 않음
+    connect_close_px: 1    # 연결성 판단 전 얇은 틈 메우기용 close 커널 반경(px)
+    merge_gap_px: 1        # p2/p3 컴포넌트가 다를 때 병합 허용 gap(px)
+    p1_margin_px: 1        # p1 포함 판정 시 여유 반경(px)
 
 runtime:
   show_windows: true
