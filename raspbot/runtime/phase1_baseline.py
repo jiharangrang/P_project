@@ -70,6 +70,34 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
     cv2.createTrackbar("roi_top", CONTROL_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
     cv2.createTrackbar("roi_bottom", CONTROL_WINDOW, int(perception_cfg.get("roi_bottom", 946)), 1000, lambda x: None)
     cv2.createTrackbar("detect_value", CONTROL_WINDOW, int(perception_cfg.get("detect_value", 120)), 255, lambda x: None)
+    cv2.createTrackbar(
+        "lab_red_l_min",
+        CONTROL_WINDOW,
+        int(perception_cfg.get("lab_red_l_min", 30)),
+        255,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "lab_red_a_min",
+        CONTROL_WINDOW,
+        int(perception_cfg.get("lab_red_a_min", 150)),
+        255,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "lab_red_b_min",
+        CONTROL_WINDOW,
+        int(perception_cfg.get("lab_red_b_min", 140)),
+        255,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "lab_gray_chroma_thr",
+        CONTROL_WINDOW,
+        int(perception_cfg.get("lab_gray_chroma_thr", 15)),
+        128,
+        lambda x: None,
+    )
 
     # PID 및 주행 속도
     cv2.createTrackbar(
@@ -268,6 +296,10 @@ def run(cfg, args) -> None:
                 roi_top = cv2.getTrackbarPos("roi_top", CONTROL_WINDOW)
                 roi_bottom = cv2.getTrackbarPos("roi_bottom", CONTROL_WINDOW)
                 detect_value = cv2.getTrackbarPos("detect_value", CONTROL_WINDOW)
+                lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", CONTROL_WINDOW)
+                lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", CONTROL_WINDOW)
+                lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
+                lab_gray_chroma_thr = cv2.getTrackbarPos("lab_gray_chroma_thr", CONTROL_WINDOW)
 
                 # PID/속도 파라미터 업데이트 (trackbar는 정수이므로 스케일링)
                 pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
@@ -314,6 +346,10 @@ def run(cfg, args) -> None:
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
                 steer_scale_slider = float(control_cfg.get("steer_scale", 1.0))
                 turn_inner_min_speed = int(turn_cfg.get("inner_min_speed", 0))
+                lab_red_l_min = int(perception_cfg.get("lab_red_l_min", 30))
+                lab_red_a_min = int(perception_cfg.get("lab_red_a_min", 150))
+                lab_red_b_min = int(perception_cfg.get("lab_red_b_min", 140))
+                lab_gray_chroma_thr = int(perception_cfg.get("lab_gray_chroma_thr", 15))
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -322,8 +358,14 @@ def run(cfg, args) -> None:
             frame_with_roi = apply_roi_overlay(frame, pts_src, width, height, top_y, bottom_y)
 
             warped, _ = warp_perspective(frame, pts_src, ipm_resolution)
-            gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
-            binary = detect_road_lines(warped, gray, detect_value)
+            binary = detect_road_lines(
+                warped,
+                detect_value,
+                lab_red_l_min,
+                lab_red_a_min,
+                lab_red_b_min,
+                lab_gray_chroma_thr,
+            )
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
             slope_norm, heading_centers, heading_offset = estimate_heading(binary)

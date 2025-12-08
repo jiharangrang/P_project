@@ -8,27 +8,42 @@ import cv2
 import numpy as np
 
 
-def detect_road_lines(color_frame, gray_frame, detect_value: int) -> np.ndarray:
-    """빨간색/엷은 회색 차선을 검출한 이진 이미지를 반환."""
-    hsv_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2HSV)
+def detect_road_lines(
+    color_frame,
+    detect_value: int,
+    red_l_min: int,
+    red_a_min: int,
+    red_b_min: int,
+    gray_chroma_thr: int,
+) -> np.ndarray:
+    """
+    Lab 색공간으로 빨간/회색 차선을 검출한 이진 이미지를 반환.
 
-    lower_red1 = np.array([0, 70, 50])
-    upper_red1 = np.array([10, 255, 255])
-    mask_red1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
+    Args:
+        detect_value: L 채널 밝기 임계값(회색/밝은 선)
+        red_l_min / red_a_min / red_b_min: 빨간선 최소 L/a/b 임계
+        gray_chroma_thr: 회색 선을 위한 크로마 한계(|a-128|, |b-128|의 최대 허용치)
+    """
+    lab_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2Lab)
+    L, A, B = cv2.split(lab_frame)
 
-    lower_red2 = np.array([170, 70, 50])
-    upper_red2 = np.array([180, 255, 255])
-    mask_red2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
-    mask_red = cv2.bitwise_or(mask_red1, mask_red2)
+    # 빨간색: 높은 a/b 성분(128 기준 양수 방향) + 너무 어둡지 않은 영역
+    red_mask = cv2.inRange(
+        lab_frame,
+        (int(red_l_min), int(red_a_min), int(red_b_min)),
+        (255, 255, 255),
+    )
 
-    threshold_gray = max(detect_value - 30, 80)
-    _, mask_gray = cv2.threshold(gray_frame, threshold_gray, 255, cv2.THRESH_BINARY)
+    # 회색/밝은 선: 높은 L, 낮은 크로마(무채색 근처)
+    l_threshold = max(int(detect_value), 0)
+    _, bright_mask = cv2.threshold(L, l_threshold, 255, cv2.THRESH_BINARY)
+    chroma_dist = cv2.max(cv2.absdiff(A, 128), cv2.absdiff(B, 128))
+    _, low_chroma_mask = cv2.threshold(
+        chroma_dist, int(gray_chroma_thr), 255, cv2.THRESH_BINARY_INV
+    )
+    mask_gray = cv2.bitwise_and(bright_mask, low_chroma_mask)
 
-    dark_threshold = 50
-    _, mask_dark = cv2.threshold(gray_frame, dark_threshold, 255, cv2.THRESH_BINARY)
-    mask_gray = cv2.bitwise_and(mask_gray, mask_dark)
-
-    mask_lines = cv2.bitwise_or(mask_red, mask_gray)
+    mask_lines = cv2.bitwise_or(red_mask, mask_gray)
 
     kernel = np.ones((3, 3), np.uint8)
     mask_lines = cv2.morphologyEx(mask_lines, cv2.MORPH_CLOSE, kernel)
