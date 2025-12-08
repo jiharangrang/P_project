@@ -107,7 +107,7 @@ def compute_lane_error(
 
 def estimate_heading(
     binary_frame: np.ndarray,
-    bands: Tuple[Tuple[float, float], ...] = ((0.15, 0.3), (0.45, 0.6), (0.75, 0.9)),
+    bands: Tuple[Tuple[float, float], ...] = ((0.0, 0.3), (0.45, 0.6), (0.75, 0.9)),
     weights: Optional[Tuple[float, ...]] = None,
 ) -> Tuple[Optional[float], List[Tuple[int, int]], Optional[float]]:
     """
