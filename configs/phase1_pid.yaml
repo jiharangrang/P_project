@@ -37,6 +37,7 @@ control:
     offset_thresh: 0.10    # 중심 오차 임계
     speed_scale: 0.5      # 턴 시 감속 계수
     steer_scale: 2.50      # 턴 시 조향 스케일 배율
+    inner_min_speed: 10    # 턴 시 안쪽 바퀴 최소 전진 속도 (역회전 방지)
 
   # heading(주황선) 기반 조향 가중치
   heading:

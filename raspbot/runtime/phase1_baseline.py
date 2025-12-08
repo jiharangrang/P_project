@@ -132,6 +132,13 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         300,
         lambda x: None,
     )
+    cv2.createTrackbar(
+        "turn_inner_min_speed",
+        CONTROL_WINDOW,
+        int(turn_cfg.get("inner_min_speed", 0)),
+        255,
+        lambda x: None,
+    )
 
     # heading 가중치
     heading_cfg = control_cfg.get("heading", {})
@@ -208,6 +215,7 @@ def run(cfg, args) -> None:
         speed_limit=int(control_cfg.get("speed_limit", 120)),
         steer_scale=float(control_cfg.get("steer_scale", 1.0)),
         deadband=float(control_cfg.get("steer_deadband", 0.0)),
+        inner_min_speed=int(control_cfg.get("turn", {}).get("inner_min_speed", 0)),
     )
 
     roi_top = perception_cfg.get("roi_top", 871)
@@ -220,6 +228,7 @@ def run(cfg, args) -> None:
     turn_offset_thresh = float(turn_cfg.get("offset_thresh", 0.3))
     turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
+    turn_inner_min_speed = int(turn_cfg.get("inner_min_speed", 0))
     heading_cfg = control_cfg.get("heading", {})
     heading_thresh = float(heading_cfg.get("thresh", 0.05))
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
@@ -297,12 +306,14 @@ def run(cfg, args) -> None:
                 turn_offset_thresh = cv2.getTrackbarPos("turn_offset_thr_x100", CONTROL_WINDOW) / 100.0
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
+                turn_inner_min_speed = cv2.getTrackbarPos("turn_inner_min_speed", CONTROL_WINDOW)
                 heading_thresh = cv2.getTrackbarPos("heading_thresh_x100", CONTROL_WINDOW) / 100.0
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
                 steer_scale_slider = float(control_cfg.get("steer_scale", 1.0))
+                turn_inner_min_speed = int(turn_cfg.get("inner_min_speed", 0))
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -356,6 +367,7 @@ def run(cfg, args) -> None:
 
             controller.base_speed = effective_speed
             controller.steer_scale = effective_steer_scale
+            controller.inner_min_speed = max(0, min(turn_inner_min_speed, controller.speed_limit))
 
             applied_left_speed = 0
             applied_right_speed = 0
