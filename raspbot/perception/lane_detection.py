@@ -109,10 +109,12 @@ def estimate_heading(
     binary_frame: np.ndarray,
     bands: Tuple[Tuple[float, float], ...] = ((0.0, 0.3), (0.45, 0.6), (0.75, 0.9)),
     weights: Optional[Tuple[float, ...]] = None,
+    bottom_opposite_tol: float = 0.05,
 ) -> Tuple[Optional[float], List[Tuple[int, int]], Optional[float]]:
     """
     여러 높이 구간에서 도로 중심을 추정해 진행 방향 기울기를 계산.
     weights로 상단(P1) 가중치를 더 줄 수 있음.
+    bottom_opposite_tol로 P3가 중앙 근처에서 약간 반대 부호일 때는 무시해 상단 정보가 완전히 사라지는 것을 방지.
 
     Returns:
         slope_norm: 하단 대비 상단 중심 이동량을 (-1~1)로 정규화한 값. 음수=좌, 양수=우.
@@ -159,7 +161,13 @@ def estimate_heading(
     bottom_turn_boost = 1.0
     if len(offsets) >= 3:
         bottom_idx = len(offsets) - 1
-        if offsets[0] * offsets[bottom_idx] < 0 and offsets[1] * offsets[bottom_idx] < 0:
+        bottom_mag = abs(offsets[bottom_idx])
+        far_enough = bottom_mag >= max(0.0, bottom_opposite_tol)
+        if (
+            far_enough
+            and offsets[0] * offsets[bottom_idx] < 0
+            and offsets[1] * offsets[bottom_idx] < 0
+        ):
             prioritize_bottom = True
             use_weights[0] = 0.0
             use_weights[1] = 0.0
@@ -168,7 +176,7 @@ def estimate_heading(
 
     if not prioritize_bottom and len(offsets) >= 2:
         near_avg = sum(offsets[1:]) / len(offsets[1:])
-        if offsets[0] * near_avg < 0:  # 중앙선 기준 반대 방향
+        if abs(offsets[0]) >= max(0.0, bottom_opposite_tol) and offsets[0] * near_avg < 0:  # 중앙선 기준 반대 방향
             use_weights[0] = 0.0
             for i in range(1, len(use_weights)):
                 use_weights[i] = max(use_weights[i], 1.5)

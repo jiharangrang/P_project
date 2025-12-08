@@ -267,6 +267,7 @@ def run(cfg, args) -> None:
     heading_cfg = control_cfg.get("heading", {})
     heading_thresh = float(heading_cfg.get("thresh", 0.05))
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
+    heading_p3_tol = float(heading_cfg.get("p3_opposite_tol", 0.05))
     heading_prev = 0.0
 
     if enable_sliders:
@@ -378,7 +379,9 @@ def run(cfg, args) -> None:
             )
 
             error_norm, histogram, centroid_x, hist_stats = compute_lane_error(binary)
-            slope_norm, heading_centers, heading_offset = estimate_heading(binary)
+            slope_norm, heading_centers, heading_offset = estimate_heading(
+                binary, bottom_opposite_tol=heading_p3_tol
+            )
             if heading_offset is not None:
                 heading_prev = heading_smooth_alpha * heading_offset + (1 - heading_smooth_alpha) * heading_prev
                 heading_used = heading_prev
