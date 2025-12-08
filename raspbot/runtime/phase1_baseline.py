@@ -357,13 +357,15 @@ def run(cfg, args) -> None:
             controller.base_speed = effective_speed
             controller.steer_scale = effective_steer_scale
 
+            applied_left_speed = 0
+            applied_right_speed = 0
             if motors_enabled:
                 if state == "LOST":
                     controller.stop()
                     if runtime_cfg.get("fail_safe_beep", True):
                         hardware.beep(0.05)
                 else:
-                    _, _, drive_dir = controller.drive(steering_output)
+                    applied_left_speed, applied_right_speed, drive_dir = controller.drive(steering_output)
                     direction = state if state != "STRAIGHT" else drive_dir
             else:
                 # 모터 일시정지 상태: 최초 전환 시에만 모터 정지 명령 전달
@@ -382,6 +384,8 @@ def run(cfg, args) -> None:
                         f"slope={slope_norm if slope_norm is not None else 'None'} "
                         f"state={state} "
                         f"steer={steering_output:.2f} "
+                        f"speed_l={applied_left_speed} "
+                        f"speed_r={applied_right_speed} "
                         f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
                     )
                 else:
