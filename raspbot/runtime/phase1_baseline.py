@@ -12,7 +12,6 @@ import cv2
 from raspbot.control import PIDController, VehicleController
 from raspbot.hardware import Camera, CameraConfig, RaspbotHardware
 from raspbot.perception import (
-    analyze_histogram,
     apply_roi_overlay,
     calculate_roi_points,
     compute_lane_error,
@@ -372,8 +371,8 @@ def run(cfg, args) -> None:
                 lab_gray_b_dev,
             )
 
-            _, histogram, centroid_x, hist_stats = compute_lane_error(binary)
-            slope_norm, heading_centers, heading_offset = estimate_heading(
+            _, centroid_x = compute_lane_error(binary)
+            slope_norm, heading_centers, heading_offset, target_mask = estimate_heading(
                 binary,
                 connect_close_px=heading_connect_close_px,
                 merge_gap_px=heading_merge_gap_px,
@@ -441,25 +440,20 @@ def run(cfg, args) -> None:
             fps = fps_timer.lap()
 
             if runtime_cfg.get("print_debug", False) and motors_enabled:
-                if hist_stats:
-                    left_sum, center_sum, right_sum, left_ratio, center_ratio, right_ratio = hist_stats
-                    print(
-                        f"heading_err={heading_used if heading_used is not None else 'None'} "
-                        f"slope={slope_norm if slope_norm is not None else 'None'} "
-                        f"state={state} "
-                        f"steer={steering_output:.2f} "
-                        f"speed_l={applied_left_speed} "
-                        f"speed_r={applied_right_speed} "
-                        f"hist L{left_sum}({left_ratio:.2f}) C{center_sum}({center_ratio:.2f}) R{right_sum}({right_ratio:.2f})"
-                    )
-                else:
-                    print("라인이 보이지 않습니다. STOP 상태 유지.")
+                print(
+                    f"heading_err={heading_used if heading_used is not None else 'None'} "
+                    f"slope={slope_norm if slope_norm is not None else 'None'} "
+                    f"state={state} "
+                    f"steer={steering_output:.2f} "
+                    f"speed_l={applied_left_speed} "
+                    f"speed_r={applied_right_speed}"
+                )
 
             if show_windows:
+                debug_input = cv2.bitwise_not(target_mask) if target_mask is not None else binary
                 debug_binary = visualize_binary_debug(
-                    binary,
+                    debug_input,
                     direction,
-                    hist_stats,
                     centroid_x,
                     steering_output,
                     fps,
