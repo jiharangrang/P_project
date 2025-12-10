@@ -183,6 +183,27 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         100,
         lambda x: None,
     )
+    cv2.createTrackbar(
+        "heading_connect_close_px",
+        CONTROL_WINDOW,
+        int(heading_cfg.get("connect_close_px", 1)),
+        20,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "heading_merge_gap_px",
+        CONTROL_WINDOW,
+        int(heading_cfg.get("merge_gap_px", 1)),
+        20,
+        lambda x: None,
+    )
+    cv2.createTrackbar(
+        "heading_p1_margin_px",
+        CONTROL_WINDOW,
+        int(heading_cfg.get("p1_margin_px", 1)),
+        20,
+        lambda x: None,
+    )
 
     # 카메라 설정
     cam_cfg = hardware_cfg.get("camera", {})
@@ -343,6 +364,9 @@ def run(cfg, args) -> None:
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_inner_min_speed = cv2.getTrackbarPos("turn_inner_min_speed", CONTROL_WINDOW)
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
+                heading_connect_close_px = cv2.getTrackbarPos("heading_connect_close_px", CONTROL_WINDOW)
+                heading_merge_gap_px = cv2.getTrackbarPos("heading_merge_gap_px", CONTROL_WINDOW)
+                heading_p1_margin_px = cv2.getTrackbarPos("heading_p1_margin_px", CONTROL_WINDOW)
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
@@ -353,6 +377,9 @@ def run(cfg, args) -> None:
                 lab_red_b_min = int(perception_cfg.get("lab_red_b_min", 140))
                 lab_gray_a_dev = int(perception_cfg.get("lab_gray_a_dev", 15))
                 lab_gray_b_dev = int(perception_cfg.get("lab_gray_b_dev", 15))
+                heading_connect_close_px = int(heading_cfg.get("connect_close_px", 1))
+                heading_merge_gap_px = int(heading_cfg.get("merge_gap_px", 1))
+                heading_p1_margin_px = int(heading_cfg.get("p1_margin_px", 1))
 
             frame = camera.read()
             height, width = frame.shape[:2]
