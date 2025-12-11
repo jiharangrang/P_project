@@ -3,14 +3,25 @@
 자율주행 Phase 1(주행 가능 도로 전체를 라인 추종하는 확장판) 파이프라인. 하드웨어 제어, 인지, 제어, 실행 루프를 모듈화했고 설정은 YAML 한 곳에 모아 관리합니다.
 
 ## 리포 구조
-- `configs/phase1_pid.yaml` 설정 파일(ROI, Lab/HSV 임계, PID/턴/헤딩 파라미터, 런타임 옵션)
-- `scripts/run_phase1.py` 실행 엔트리(항상 `raspbot.runtime.phase1_baseline`을 로드)
-- `raspbot/`
-  - `hardware/` 카메라/모터/서보 HAL (`RaspbotHardware`, `Camera`)
-  - `control/` PID/차량 제어 (`PIDController`, `VehicleController`)
-  - `perception/` 라인 검출(`lane_detection*.py`), IPM/ROI(`preprocessing.py`), 디버그 표시(`visualization.py`)
-  - `runtime/` 실행 루프(`phase1_baseline*.py`), 상태 출력, 키 입력 처리
-  - `utils/` FPS 측정, 설정 로더
+```
+P_project/
+├ README.md
+├ configs/                 # 설정(YAML)
+│  └ phase1_pid.yaml       # ROI, Lab/HSV 임계, PID/턴/헤딩, 런타임 옵션
+├ scripts/
+│  └ run_phase1.py         # 실행 엔트리(phase1_baseline 호출)
+└ raspbot/                 # 소스 패키지
+   ├ hardware/             # 카메라/모터/서보 HAL (RaspbotHardware, Camera)
+   ├ control/              # PID/차량 제어 (PIDController, VehicleController)
+   ├ perception/           # 인지
+   │  ├ lane_detection_hsv.py   # HSV 차선 검출
+   │  ├ lane_detection_lab.py   # Lab 차선 검출
+   │  ├ preprocessing.py        # ROI/IPM 계산
+   │  └ visualization.py        # 디버그 오버레이
+   ├ runtime/
+   │  └ phase1_baseline.py      # HSV/Lab 통합 실행 루프
+   └ utils/                # FPS 측정, 설정 로더
+```
 
 ## 실행하기
 ```bash
