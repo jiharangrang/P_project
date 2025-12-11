@@ -19,6 +19,11 @@ perception:
   roi_top: 756          # 0~1000 스케일
   roi_bottom: 946       # 0~1000 스케일
   detect_value: 170     # HSV/그레이 임계값 기준
+  lab_red_l_min: 30
+  lab_red_a_min: 150
+  lab_red_b_min: 140
+  lab_gray_a_dev: 15
+  lab_gray_b_dev: 15
   ipm_resolution: [320, 240]
 
 control:
