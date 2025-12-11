@@ -50,7 +50,6 @@ control:
   # heading(주황선) 기반 조향 가중치
   heading:
     smooth_alpha: 0.20     # EMA로 부드럽게
-    thresh: 0.01           # 이 값 이상일 때만 적용
     connect_close_px: 1    # heading 중심 계산 시 도로 마스크 연결 범위
     merge_gap_px: 1        # p2/p3 병합 시 허용 간격
     p1_margin_px: 1        # p1 포함 여유 확장 픽셀
