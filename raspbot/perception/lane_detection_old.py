@@ -8,46 +8,27 @@ import cv2
 import numpy as np
 
 
-def detect_road_lines(
-    color_frame,
-    detect_value: int,
-    red_l_min: int,
-    red_a_min: int,
-    red_b_min: int,
-    gray_a_dev: int,
-    gray_b_dev: int,
-) -> np.ndarray:
-    """
-    Lab 색공간으로 빨간/회색 차선을 검출한 이진 이미지를 반환.
+def detect_road_lines(color_frame, gray_frame, detect_value: int) -> np.ndarray:
+    """빨간색/엷은 회색 차선을 검출한 이진 이미지를 반환."""
+    hsv_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2HSV)
 
-    Args:
-        detect_value: L 채널 밝기 임계값(회색/밝은 선)
-        red_l_min / red_a_min / red_b_min: 빨간선 최소 L/a/b 임계
-        gray_a_dev / gray_b_dev: 회색 선을 위한 a/b 허용 편차(|a-128|, |b-128|)
-    """
-    lab_frame = cv2.cvtColor(color_frame, cv2.COLOR_BGR2Lab)
-    L, A, B = cv2.split(lab_frame)
+    lower_red1 = np.array([0, 70, 50])
+    upper_red1 = np.array([10, 255, 255])
+    mask_red1 = cv2.inRange(hsv_frame, lower_red1, upper_red1)
 
-    # 빨간색: 높은 a/b 성분(128 기준 양수 방향) + 너무 어둡지 않은 영역
-    red_mask = cv2.inRange(
-        lab_frame,
-        (int(red_l_min), int(red_a_min), int(red_b_min)),
-        (255, 255, 255),
-    )
+    lower_red2 = np.array([170, 70, 50])
+    upper_red2 = np.array([180, 255, 255])
+    mask_red2 = cv2.inRange(hsv_frame, lower_red2, upper_red2)
+    mask_red = cv2.bitwise_or(mask_red1, mask_red2)
 
-    # 회색/밝은 선: 높은 L, 낮은 크로마(무채색 근처)
-    l_threshold = max(int(detect_value), 0)
-    _, bright_mask = cv2.threshold(L, l_threshold, 255, cv2.THRESH_BINARY)
-    _, mask_a = cv2.threshold(
-        cv2.absdiff(A, 128), int(gray_a_dev), 255, cv2.THRESH_BINARY_INV
-    )
-    _, mask_b = cv2.threshold(
-        cv2.absdiff(B, 128), int(gray_b_dev), 255, cv2.THRESH_BINARY_INV
-    )
-    low_chroma_mask = cv2.bitwise_and(mask_a, mask_b)
-    mask_gray = cv2.bitwise_and(bright_mask, low_chroma_mask)
+    threshold_gray = max(detect_value - 30, 80)
+    _, mask_gray = cv2.threshold(gray_frame, threshold_gray, 255, cv2.THRESH_BINARY)
 
-    mask_lines = cv2.bitwise_or(red_mask, mask_gray)
+    dark_threshold = 50
+    _, mask_dark = cv2.threshold(gray_frame, dark_threshold, 255, cv2.THRESH_BINARY)
+    mask_gray = cv2.bitwise_and(mask_gray, mask_dark)
+
+    mask_lines = cv2.bitwise_or(mask_red, mask_gray)
 
     kernel = np.ones((5, 5), np.uint8)
     mask_lines = cv2.morphologyEx(mask_lines, cv2.MORPH_CLOSE, kernel)
@@ -195,7 +176,7 @@ def estimate_heading(
         )
         return None, centers, top_offset_norm, target_mask
 
-    default_weights = (1.8, 1.2, 0.7)
+    default_weights = (1.5, 1.0, 0.7)
     use_weights = list(weights) if weights else list(default_weights[: len(centers)])
     if len(use_weights) < len(centers):
         use_weights += [use_weights[-1]] * (len(centers) - len(use_weights))

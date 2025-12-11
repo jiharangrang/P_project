@@ -11,15 +11,8 @@ import cv2
 
 from raspbot.control import PIDController, VehicleController
 from raspbot.hardware import Camera, CameraConfig, RaspbotHardware
-from raspbot.perception import (
-    apply_roi_overlay,
-    calculate_roi_points,
-    compute_lane_error,
-    detect_road_lines,
-    estimate_heading,
-    visualize_binary_debug,
-    warp_perspective,
-)
+from raspbot.perception import apply_roi_overlay, calculate_roi_points, visualize_binary_debug, warp_perspective
+from raspbot.perception.lane_detection_old import compute_lane_error, detect_road_lines, estimate_heading
 from raspbot.utils import FpsTimer, load_config
 
 
@@ -69,41 +62,6 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
     cv2.createTrackbar("roi_top", CONTROL_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
     cv2.createTrackbar("roi_bottom", CONTROL_WINDOW, int(perception_cfg.get("roi_bottom", 946)), 1000, lambda x: None)
     cv2.createTrackbar("detect_value", CONTROL_WINDOW, int(perception_cfg.get("detect_value", 120)), 255, lambda x: None)
-    cv2.createTrackbar(
-        "lab_red_l_min",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_red_l_min", 30)),
-        255,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_red_a_min",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_red_a_min", 150)),
-        255,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_red_b_min",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_red_b_min", 140)),
-        255,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_gray_a_dev",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_gray_a_dev", 15)),
-        128,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_gray_b_dev",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_gray_b_dev", 15)),
-        128,
-        lambda x: None,
-    )
 
     # PID 및 주행 속도
     cv2.createTrackbar(
@@ -164,13 +122,6 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         CONTROL_WINDOW,
         int(float(turn_cfg.get("steer_scale", 1.3)) * 100),
         300,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "turn_inner_min_speed",
-        CONTROL_WINDOW,
-        int(turn_cfg.get("inner_min_speed", 0)),
-        255,
         lambda x: None,
     )
 
@@ -263,7 +214,6 @@ def run(cfg, args) -> None:
         speed_limit=int(control_cfg.get("speed_limit", 120)),
         steer_scale=float(control_cfg.get("steer_scale", 1.0)),
         deadband=float(control_cfg.get("steer_deadband", 0.0)),
-        inner_min_speed=int(control_cfg.get("turn", {}).get("inner_min_speed", 0)),
     )
 
     roi_top = perception_cfg.get("roi_top", 871)
@@ -276,7 +226,6 @@ def run(cfg, args) -> None:
     turn_offset_thresh = float(turn_cfg.get("offset_thresh", 0.3))
     turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
     turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
-    turn_inner_min_speed = int(turn_cfg.get("inner_min_speed", 0))
     heading_cfg = control_cfg.get("heading", {})
     heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
     heading_connect_close_px = int(heading_cfg.get("connect_close_px", 1))
@@ -309,7 +258,7 @@ def run(cfg, args) -> None:
     print("=== Phase 1: 라인 추종 주행 시작 ===")
     print("키 입력:")
     print("  ESC/q : 프로그램 종료")
-    print("  s     : 주행 시작/일시정지 토글 (초기 상태: 정지)")
+    print("  s     : 모터 토글 일시정지/재개 (초기 상태: 정지)")
     print("  SPACE : 일시정지 (아무 키나 누르면 재개)")
 
     try:
@@ -319,11 +268,6 @@ def run(cfg, args) -> None:
                 roi_top = cv2.getTrackbarPos("roi_top", CONTROL_WINDOW)
                 roi_bottom = cv2.getTrackbarPos("roi_bottom", CONTROL_WINDOW)
                 detect_value = cv2.getTrackbarPos("detect_value", CONTROL_WINDOW)
-                lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", CONTROL_WINDOW)
-                lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", CONTROL_WINDOW)
-                lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
-                lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", CONTROL_WINDOW)
-                lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", CONTROL_WINDOW)
 
                 # PID/속도 파라미터 업데이트 (trackbar는 정수이므로 스케일링)
                 pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
@@ -362,7 +306,6 @@ def run(cfg, args) -> None:
                 turn_offset_thresh = cv2.getTrackbarPos("turn_offset_thr_x100", CONTROL_WINDOW) / 100.0
                 turn_speed_scale = cv2.getTrackbarPos("turn_speed_scale_x100", CONTROL_WINDOW) / 100.0
                 turn_steer_scale = cv2.getTrackbarPos("turn_steer_scale_x100", CONTROL_WINDOW) / 100.0
-                turn_inner_min_speed = cv2.getTrackbarPos("turn_inner_min_speed", CONTROL_WINDOW)
                 heading_smooth_alpha = cv2.getTrackbarPos("heading_smooth_x100", CONTROL_WINDOW) / 100.0
                 heading_connect_close_px = cv2.getTrackbarPos("heading_connect_close_px", CONTROL_WINDOW)
                 heading_merge_gap_px = cv2.getTrackbarPos("heading_merge_gap_px", CONTROL_WINDOW)
@@ -371,12 +314,6 @@ def run(cfg, args) -> None:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
                 steer_scale_slider = float(control_cfg.get("steer_scale", 1.0))
-                turn_inner_min_speed = int(turn_cfg.get("inner_min_speed", 0))
-                lab_red_l_min = int(perception_cfg.get("lab_red_l_min", 30))
-                lab_red_a_min = int(perception_cfg.get("lab_red_a_min", 150))
-                lab_red_b_min = int(perception_cfg.get("lab_red_b_min", 140))
-                lab_gray_a_dev = int(perception_cfg.get("lab_gray_a_dev", 15))
-                lab_gray_b_dev = int(perception_cfg.get("lab_gray_b_dev", 15))
                 heading_connect_close_px = int(heading_cfg.get("connect_close_px", 1))
                 heading_merge_gap_px = int(heading_cfg.get("merge_gap_px", 1))
                 heading_p1_margin_px = int(heading_cfg.get("p1_margin_px", 1))
@@ -388,17 +325,10 @@ def run(cfg, args) -> None:
             frame_with_roi = apply_roi_overlay(frame, pts_src, width, height, top_y, bottom_y)
 
             warped, _ = warp_perspective(frame, pts_src, ipm_resolution)
-            binary = detect_road_lines(
-                warped,
-                detect_value,
-                lab_red_l_min,
-                lab_red_a_min,
-                lab_red_b_min,
-                lab_gray_a_dev,
-                lab_gray_b_dev,
-            )
+            gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+            binary = detect_road_lines(warped, gray, detect_value)
 
-            _, centroid_x = compute_lane_error(binary)
+            error_norm, centroid_x = compute_lane_error(binary)
             slope_norm, heading_centers, heading_offset, target_mask = estimate_heading(
                 binary,
                 connect_close_px=heading_connect_close_px,
@@ -445,7 +375,6 @@ def run(cfg, args) -> None:
 
             controller.base_speed = effective_speed
             controller.steer_scale = effective_steer_scale
-            controller.inner_min_speed = max(0, min(turn_inner_min_speed, controller.speed_limit))
 
             applied_left_speed = 0
             applied_right_speed = 0
@@ -458,7 +387,7 @@ def run(cfg, args) -> None:
                     applied_left_speed, applied_right_speed, drive_dir = controller.drive(steering_output)
                     direction = state if state != "STRAIGHT" else drive_dir
             else:
-                # 모터 일시정지 상태: 최초 전환 시에만 모터 정지 명령 전달
+                # 모터 일시정지 상태: 출력만 갱신, 실제 구동은 중단
                 if motors_was_enabled:
                     controller.stop()
                 direction = "PAUSE"
