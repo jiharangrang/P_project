@@ -1,6 +1,6 @@
 # P Project (Raspbot V2)
 
-자율주행 Phase 1(라인 추종) 파이프라인. 하드웨어 제어, 인지, 제어, 실행 루프를 모듈화했고 설정은 YAML 한 곳에 모아 관리합니다.
+자율주행 Phase 1(주행 가능 도로 전체를 라인 추종하는 확장판) 파이프라인. 하드웨어 제어, 인지, 제어, 실행 루프를 모듈화했고 설정은 YAML 한 곳에 모아 관리합니다.
 
 ## 리포 구조
 - `configs/phase1_pid.yaml` 설정 파일(ROI, Lab/HSV 임계, PID/턴/헤딩 파라미터, 런타임 옵션)
@@ -15,23 +15,25 @@
 ## 실행하기
 ```bash
 python3 scripts/run_phase1.py                # 기본 설정
-python3 scripts/run_phase1.py --config configs/phase1_pid.yaml
+python3 scripts/run_phase1.py --mode lab     # Lab 모드 명시
+python3 scripts/run_phase1.py --mode hsv     # HSV 모드 명시
+python3 scripts/run_phase1.py --config configs/phase1_pid.yaml  # 다른 설정 파일 사용
 python3 scripts/run_phase1.py --mock-hw      # 모터/서보 호출을 콘솔 로그로 대체
 python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
 ```
 
 ## 라인 검출 모드 선택
-실행 시에는 `raspbot/perception/lane_detection.py`와 `raspbot/runtime/phase1_baseline.py`가 로드됩니다. 아래 둘 중 하나를 원본 이름으로 교체해 사용하세요.
-
-- HSV 모드: `lane_detection_old.py` + `phase1_baseline_old.py` (HSV+그레이 임계 기반)
-- Lab 모드: `lane_detection_lab.py` + `phase1_baseline_lab.py` (Lab 빨강/회색 분리 임계, 최신 커밋과 동일; `inner_min_speed`만 없음)
+- 설정: `perception.mode: lab | hsv` (default: lab)
+- CLI: `python3 scripts/run_phase1.py --mode lab` 또는 `--mode hsv` (설정값을 덮어씀)
+- 파일 교체 없이 모드에 따라 트랙바/파라미터도 자동으로 분기됩니다.
 
 ## 설정 파일(주요 항목)
 - `perception`  
-  - `roi_top`, `roi_bottom`: ROI 높이(0~1000 스케일)  
-  - `detect_value`: 밝기 임계 (HSV 모드에선 회색 임계, Lab 모드에선 L 밝기 임계)  
-  - `lab_red_*`, `lab_gray_*`: Lab 모드 임계값(L/a/b 최소 또는 a/b 편차)  
-  - `ipm_resolution`: IPM 출력 해상도
+  - `mode`: `lab | hsv`  
+  - 공통: `roi_top`, `roi_bottom`, `ipm_resolution`  
+  - `hsv.detect_value`: 회색 밝기 임계  
+  - `lab.detect_value`: L 밝기 임계  
+  - `lab.red_l_min/red_a_min/red_b_min`, `lab.gray_a_dev/gray_b_dev`: Lab 임계값(L/a/b 최소 혹은 a/b 편차)
 - `control`  
   - `base_speed`, `speed_limit`, `steer_limit`, `steer_scale`, `steer_deadband`  
   - PID: `kp`, `ki`, `kd`  
@@ -65,6 +67,7 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
 ## 디버그/로그
 - 모터 활성 상태에서만 터미널 로그 출력: `heading_err`, `slope`, `state`, `steer`, `speed_l/r`
 - OpenCV 창: `phase1/frame`(ROI 오버레이), `phase1/binary`(선택 도로 영역 강조)
+- 모터 정지 시에는 출력/구동이 멈추며, `target_mask`를 반전한 디버그 바이너리가 계속 표시됩니다.
 
 ## 개발 팁
 - 모드를 바꿀 때는 원하는 변형 파일을 `lane_detection.py`, `phase1_baseline.py`로 교체한 뒤 실행합니다.

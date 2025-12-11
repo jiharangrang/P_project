@@ -1,4 +1,4 @@
-"""Phase 1: ROI + Lab 기반 라인 추종 주행 루프."""
+"""Phase 1: ROI + 라인 추종 주행 루프 (HSV/Lab 모드 선택)."""
 
 from __future__ import annotations
 
@@ -12,20 +12,26 @@ import cv2
 from raspbot.control import PIDController, VehicleController
 from raspbot.hardware import Camera, CameraConfig, RaspbotHardware
 from raspbot.perception import apply_roi_overlay, calculate_roi_points, visualize_binary_debug, warp_perspective
-from raspbot.perception.lane_detection_lab import compute_lane_error, detect_road_lines, estimate_heading
+from raspbot.perception import lane_detection_hsv, lane_detection_lab
 from raspbot.utils import FpsTimer, load_config
 
 
 CONTROL_WINDOW = "phase1/controls"
+MODE_CHOICES = ("hsv", "lab")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Phase1 라인 기반 자율주행 루프")
+    parser = argparse.ArgumentParser(description="Phase1 라인 기반 자율주행 루프 (HSV/Lab)")
     parser.add_argument(
         "--config",
         type=str,
         default=str(Path(__file__).resolve().parents[2] / "configs" / "phase1_pid.yaml"),
         help="YAML 설정 파일 경로",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=MODE_CHOICES,
+        help="라인 검출 모드 선택 (hsv | lab). 미지정 시 설정 파일 값 사용.",
     )
     parser.add_argument(
         "--mock-hw",
@@ -53,50 +59,54 @@ def build_camera(cfg) -> Camera:
     return Camera(camera_cfg)
 
 
-def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> None:
+def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mode: str) -> None:
     """실시간 조정을 위한 트랙바 UI 생성."""
     cv2.namedWindow(CONTROL_WINDOW, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(CONTROL_WINDOW, 420, 480)
+    cv2.resizeWindow(CONTROL_WINDOW, 420, 520)
 
-    # ROI 및 바이너리 스레시홀드
+    # 공통 ROI 및 밝기 임계
     cv2.createTrackbar("roi_top", CONTROL_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
     cv2.createTrackbar("roi_bottom", CONTROL_WINDOW, int(perception_cfg.get("roi_bottom", 946)), 1000, lambda x: None)
-    cv2.createTrackbar("detect_value", CONTROL_WINDOW, int(perception_cfg.get("detect_value", 120)), 255, lambda x: None)
-    cv2.createTrackbar(
-        "lab_red_l_min",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_red_l_min", 30)),
-        255,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_red_a_min",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_red_a_min", 150)),
-        255,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_red_b_min",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_red_b_min", 140)),
-        255,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_gray_a_dev",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_gray_a_dev", 15)),
-        128,
-        lambda x: None,
-    )
-    cv2.createTrackbar(
-        "lab_gray_b_dev",
-        CONTROL_WINDOW,
-        int(perception_cfg.get("lab_gray_b_dev", 15)),
-        128,
-        lambda x: None,
-    )
+    mode_cfg = perception_cfg.get(mode, {})
+    detect_init = int(mode_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
+    cv2.createTrackbar("detect_value", CONTROL_WINDOW, detect_init, 255, lambda x: None)
+
+    if mode == "lab":
+        cv2.createTrackbar(
+            "lab_red_l_min",
+            CONTROL_WINDOW,
+            int(mode_cfg.get("red_l_min", perception_cfg.get("lab_red_l_min", 30))),
+            255,
+            lambda x: None,
+        )
+        cv2.createTrackbar(
+            "lab_red_a_min",
+            CONTROL_WINDOW,
+            int(mode_cfg.get("red_a_min", perception_cfg.get("lab_red_a_min", 150))),
+            255,
+            lambda x: None,
+        )
+        cv2.createTrackbar(
+            "lab_red_b_min",
+            CONTROL_WINDOW,
+            int(mode_cfg.get("red_b_min", perception_cfg.get("lab_red_b_min", 140))),
+            255,
+            lambda x: None,
+        )
+        cv2.createTrackbar(
+            "lab_gray_a_dev",
+            CONTROL_WINDOW,
+            int(mode_cfg.get("gray_a_dev", perception_cfg.get("lab_gray_a_dev", 15))),
+            128,
+            lambda x: None,
+        )
+        cv2.createTrackbar(
+            "lab_gray_b_dev",
+            CONTROL_WINDOW,
+            int(mode_cfg.get("gray_b_dev", perception_cfg.get("lab_gray_b_dev", 15))),
+            128,
+            lambda x: None,
+        )
 
     # PID 및 주행 속도
     cv2.createTrackbar(
@@ -160,7 +170,7 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg) -> 
         lambda x: None,
     )
 
-    # heading 가중치
+    # heading 가중치/연결 파라미터
     heading_cfg = control_cfg.get("heading", {})
     cv2.createTrackbar(
         "heading_smooth_x100",
@@ -217,6 +227,15 @@ def run(cfg, args) -> None:
     control_cfg = cfg.get("control", {})
     runtime_cfg = cfg.get("runtime", {})
 
+    cfg_mode = str(perception_cfg.get("mode", "lab")).lower()
+    mode = (args.mode or cfg_mode).lower()
+    if mode not in MODE_CHOICES:
+        print(f"[WARN] 지원하지 않는 모드 '{mode}', lab으로 강제 전환합니다.")
+        mode = "lab"
+
+    hsv_cfg = perception_cfg.get("hsv", {})
+    lab_cfg = perception_cfg.get("lab", {})
+
     show_windows = runtime_cfg.get("show_windows", True) and not args.headless
     enable_sliders = runtime_cfg.get("enable_sliders", True) and show_windows
 
@@ -253,13 +272,19 @@ def run(cfg, args) -> None:
 
     roi_top = perception_cfg.get("roi_top", 871)
     roi_bottom = perception_cfg.get("roi_bottom", 946)
-    detect_value = perception_cfg.get("detect_value", 120)
-    lab_red_l_min = int(perception_cfg.get("lab_red_l_min", 30))
-    lab_red_a_min = int(perception_cfg.get("lab_red_a_min", 150))
-    lab_red_b_min = int(perception_cfg.get("lab_red_b_min", 140))
-    lab_gray_a_dev = int(perception_cfg.get("lab_gray_a_dev", 15))
-    lab_gray_b_dev = int(perception_cfg.get("lab_gray_b_dev", 15))
     ipm_resolution = tuple(perception_cfg.get("ipm_resolution", (320, 240)))
+
+    # 모드별 초기값
+    if mode == "lab":
+        detect_value = int(lab_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
+        lab_red_l_min = int(lab_cfg.get("red_l_min", perception_cfg.get("lab_red_l_min", 30)))
+        lab_red_a_min = int(lab_cfg.get("red_a_min", perception_cfg.get("lab_red_a_min", 150)))
+        lab_red_b_min = int(lab_cfg.get("red_b_min", perception_cfg.get("lab_red_b_min", 140)))
+        lab_gray_a_dev = int(lab_cfg.get("gray_a_dev", perception_cfg.get("lab_gray_a_dev", 15)))
+        lab_gray_b_dev = int(lab_cfg.get("gray_b_dev", perception_cfg.get("lab_gray_b_dev", 15)))
+    else:
+        detect_value = int(hsv_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
+        lab_red_l_min = lab_red_a_min = lab_red_b_min = lab_gray_a_dev = lab_gray_b_dev = 0
 
     turn_cfg = control_cfg.get("turn", {})
     turn_slope_thresh = float(turn_cfg.get("slope_thresh", 0.25))
@@ -274,7 +299,7 @@ def run(cfg, args) -> None:
     heading_prev = 0.0
 
     if enable_sliders:
-        create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg)
+        create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mode)
         last_cam_settings = (
             int(hardware_cfg.get("camera", {}).get("brightness", 0)),
             int(hardware_cfg.get("camera", {}).get("contrast", 0)),
@@ -295,7 +320,7 @@ def run(cfg, args) -> None:
     motors_was_enabled = motors_enabled
     controller.stop()
 
-    print("=== Phase 1: 라인 추종 주행 시작 ===")
+    print(f"=== Phase 1: 라인 추종 주행 시작 (mode={mode}) ===")
     print("키 입력:")
     print("  ESC/q : 프로그램 종료")
     print("  s     : 모터 토글 일시정지/재개 (초기 상태: 정지)")
@@ -308,11 +333,6 @@ def run(cfg, args) -> None:
                 roi_top = cv2.getTrackbarPos("roi_top", CONTROL_WINDOW)
                 roi_bottom = cv2.getTrackbarPos("roi_bottom", CONTROL_WINDOW)
                 detect_value = cv2.getTrackbarPos("detect_value", CONTROL_WINDOW)
-                lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", CONTROL_WINDOW)
-                lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", CONTROL_WINDOW)
-                lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
-                lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", CONTROL_WINDOW)
-                lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", CONTROL_WINDOW)
 
                 # PID/속도 파라미터 업데이트 (trackbar는 정수이므로 스케일링)
                 pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
@@ -355,18 +375,34 @@ def run(cfg, args) -> None:
                 heading_connect_close_px = cv2.getTrackbarPos("heading_connect_close_px", CONTROL_WINDOW)
                 heading_merge_gap_px = cv2.getTrackbarPos("heading_merge_gap_px", CONTROL_WINDOW)
                 heading_p1_margin_px = cv2.getTrackbarPos("heading_p1_margin_px", CONTROL_WINDOW)
+
+                if mode == "lab":
+                    lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", CONTROL_WINDOW)
+                    lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", CONTROL_WINDOW)
+                    lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
+                    lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", CONTROL_WINDOW)
+                    lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", CONTROL_WINDOW)
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
                 steer_scale_slider = float(control_cfg.get("steer_scale", 1.0))
-                lab_red_l_min = int(perception_cfg.get("lab_red_l_min", 30))
-                lab_red_a_min = int(perception_cfg.get("lab_red_a_min", 150))
-                lab_red_b_min = int(perception_cfg.get("lab_red_b_min", 140))
-                lab_gray_a_dev = int(perception_cfg.get("lab_gray_a_dev", 15))
-                lab_gray_b_dev = int(perception_cfg.get("lab_gray_b_dev", 15))
+                turn_slope_thresh = float(turn_cfg.get("slope_thresh", 0.25))
+                turn_offset_thresh = float(turn_cfg.get("offset_thresh", 0.3))
+                turn_speed_scale = float(turn_cfg.get("speed_scale", 0.7))
+                turn_steer_scale = float(turn_cfg.get("steer_scale", 1.3))
+                heading_smooth_alpha = float(heading_cfg.get("smooth_alpha", 0.2))
                 heading_connect_close_px = int(heading_cfg.get("connect_close_px", 1))
                 heading_merge_gap_px = int(heading_cfg.get("merge_gap_px", 1))
                 heading_p1_margin_px = int(heading_cfg.get("p1_margin_px", 1))
+                if mode == "lab":
+                    detect_value = int(lab_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
+                    lab_red_l_min = int(lab_cfg.get("red_l_min", perception_cfg.get("lab_red_l_min", 30)))
+                    lab_red_a_min = int(lab_cfg.get("red_a_min", perception_cfg.get("lab_red_a_min", 150)))
+                    lab_red_b_min = int(lab_cfg.get("red_b_min", perception_cfg.get("lab_red_b_min", 140)))
+                    lab_gray_a_dev = int(lab_cfg.get("gray_a_dev", perception_cfg.get("lab_gray_a_dev", 15)))
+                    lab_gray_b_dev = int(lab_cfg.get("gray_b_dev", perception_cfg.get("lab_gray_b_dev", 15)))
+                else:
+                    detect_value = int(hsv_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -375,18 +411,22 @@ def run(cfg, args) -> None:
             frame_with_roi = apply_roi_overlay(frame, pts_src, width, height, top_y, bottom_y)
 
             warped, _ = warp_perspective(frame, pts_src, ipm_resolution)
-            binary = detect_road_lines(
-                warped,
-                detect_value,
-                lab_red_l_min,
-                lab_red_a_min,
-                lab_red_b_min,
-                lab_gray_a_dev,
-                lab_gray_b_dev,
-            )
+            if mode == "lab":
+                binary = lane_detection_lab.detect_road_lines(
+                    warped,
+                    detect_value,
+                    lab_red_l_min,
+                    lab_red_a_min,
+                    lab_red_b_min,
+                    lab_gray_a_dev,
+                    lab_gray_b_dev,
+                )
+            else:
+                gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+                binary = lane_detection_hsv.detect_road_lines(warped, gray, detect_value)
 
-            error_norm, centroid_x = compute_lane_error(binary)
-            slope_norm, heading_centers, heading_offset, target_mask = estimate_heading(
+            error_norm, centroid_x = lane_detection_lab.compute_lane_error(binary)
+            slope_norm, heading_centers, heading_offset, target_mask = lane_detection_lab.estimate_heading(
                 binary,
                 connect_close_px=heading_connect_close_px,
                 merge_gap_px=heading_merge_gap_px,
@@ -491,7 +531,7 @@ def run(cfg, args) -> None:
                 elif key == 32:  # 스페이스바: 일시정지
                     controller.stop()
                     print("일시정지. 아무 키나 누르면 재개...")
-                    cv2.waitKey()  # 키 입력 대기
+                    cv2.waitKey()
             else:
                 time.sleep(runtime_cfg.get("headless_delay", 0.01))
             motors_was_enabled = motors_enabled
