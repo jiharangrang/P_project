@@ -89,12 +89,18 @@ class RaspbotHardware:
         state = 1 if on else 0
         self.bot.Ctrl_WQ2812_ALL(state, self.led_mode if on else 0)
 
+    def set_beep(self, on: bool) -> None:
+        """비프 스위치를 즉시 ON/OFF한다(논블로킹)."""
+        if not self.use_beep:
+            return
+        self.bot.Ctrl_BEEP_Switch(1 if on else 0)
+
     def beep(self, duration: float = 0.1) -> None:
         if not self.use_beep:
             return
-        self.bot.Ctrl_BEEP_Switch(1)
+        self.set_beep(True)
         time.sleep(duration)
-        self.bot.Ctrl_BEEP_Switch(0)
+        self.set_beep(False)
 
     def set_motor_speeds(self, front_left: int, rear_left: int, front_right: int, rear_right: int) -> None:
         self.bot.Ctrl_Muto(0, int(front_left))

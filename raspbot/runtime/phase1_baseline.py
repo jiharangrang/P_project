@@ -13,6 +13,8 @@ from raspbot.control import PIDController, VehicleController
 from raspbot.hardware import Camera, CameraConfig, RaspbotHardware
 from raspbot.perception import apply_roi_overlay, calculate_roi_points, visualize_binary_debug, warp_perspective
 from raspbot.perception import lane_detection_hsv, lane_detection_lab
+from raspbot.perception.yolo_events import YoloEventDetector
+from raspbot.planning.mission_fsm import BeepSequencer, MissionFSM
 from raspbot.utils import FpsTimer, load_config
 
 
@@ -62,7 +64,7 @@ def build_camera(cfg) -> Camera:
 def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mode: str) -> None:
     """실시간 조정을 위한 트랙바 UI 생성."""
     cv2.namedWindow(CONTROL_WINDOW, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(CONTROL_WINDOW, 420, 520)
+    cv2.resizeWindow(CONTROL_WINDOW, 420, 720)
 
     # 공통 ROI 및 밝기 임계
     cv2.createTrackbar("roi_top", CONTROL_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
@@ -220,6 +222,22 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mod
         lambda x: None,
     )
 
+    # YOLO bbox 면적 비율 임계(0~0.2, x1000 스케일)
+    yolo_cfg = perception_cfg.get("yolo", {})
+    min_area_cfg = yolo_cfg.get("min_area_ratio", {})
+
+    def _init_ratio(name: str, default: float = 0.0) -> int:
+        return int(float(min_area_cfg.get(name, default)) * 1000)
+
+    max_ratio_x1000 = 200
+    cv2.createTrackbar("yolo_area_red_x1000", CONTROL_WINDOW, _init_ratio("red", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar(
+        "yolo_area_green_x1000", CONTROL_WINDOW, _init_ratio("green", 0.0), max_ratio_x1000, lambda x: None
+    )
+    cv2.createTrackbar("yolo_area_oo_x1000", CONTROL_WINDOW, _init_ratio("oo", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar("yolo_area_xx_x1000", CONTROL_WINDOW, _init_ratio("xx", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar("yolo_area_car_x1000", CONTROL_WINDOW, _init_ratio("car", 0.0), max_ratio_x1000, lambda x: None)
+
 
 def run(cfg, args) -> None:
     hardware_cfg = cfg.get("hardware", {})
@@ -298,6 +316,54 @@ def run(cfg, args) -> None:
     heading_p1_margin_px = int(heading_cfg.get("p1_margin_px", 1))
     heading_prev = 0.0
 
+    # ===== YOLO 이벤트 + 미션 FSM 초기화 =====
+    yolo_cfg = perception_cfg.get("yolo", {})
+    yolo_enabled = bool(yolo_cfg.get("enabled", True))
+    yolo_targets = yolo_cfg.get("targets", ["red", "green", "oo", "xx", "car"])
+    yolo_min_area_ratio_init = {
+        k.lower(): float(v)
+        for k, v in (yolo_cfg.get("min_area_ratio", {}) or {}).items()
+        if v is not None
+    }
+    cooldown_s_cfg = dict(yolo_cfg.get("cooldown_s", {}) or {})
+    cooldown_s_cfg.setdefault("car", float(yolo_cfg.get("car_cooldown_s", 3.0)))
+
+    yolo_detector = None
+    if yolo_enabled:
+        try:
+            from ultralytics import YOLO  # type: ignore
+
+            model_path = Path(yolo_cfg.get("model", Path(__file__).resolve().parents[2] / "models" / "yolo" / "best.pt"))
+            if not model_path.is_absolute():
+                model_path = Path(__file__).resolve().parents[2] / model_path
+            if not model_path.exists():
+                raise FileNotFoundError(f"YOLO 모델 파일을 찾을 수 없습니다: {model_path}")
+
+            print(f"[INFO] YOLO 모델 로드: {model_path}")
+            model = YOLO(str(model_path))
+            yolo_detector = YoloEventDetector(
+                model=model,
+                target_names=yolo_targets,
+                imgsz=int(yolo_cfg.get("imgsz", 320)),
+                conf=float(yolo_cfg.get("conf", 0.5)),
+                device=yolo_cfg.get("device"),
+                confirm_frames=int(yolo_cfg.get("confirm_frames", 3)),
+                cooldown_s=cooldown_s_cfg,
+                min_area_ratio=yolo_min_area_ratio_init,
+            )
+        except Exception as e:
+            print(f"[WARN] YOLO 초기화 실패: {e} → YOLO 비활성화")
+            yolo_detector = None
+
+    beep_seq = BeepSequencer(hardware)
+    mission_cfg = cfg.get("mission", {}) or {}
+    mission_fsm = MissionFSM(
+        beep_seq=beep_seq,
+        steer_limit=float(control_cfg.get("steer_limit", 80)),
+        parking_cfg=mission_cfg.get("parking", {}),
+        hazard_cfg=mission_cfg.get("hazard", {}),
+    )
+
     if enable_sliders:
         create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mode)
         last_cam_settings = (
@@ -319,6 +385,14 @@ def run(cfg, args) -> None:
     motors_enabled = False
     motors_was_enabled = motors_enabled
     controller.stop()
+
+    # LOST 복구(3초 정지 → 2초 후진)
+    lost_wait_s = float(runtime_cfg.get("lost_recovery_wait_s", 3.0))
+    lost_reverse_speed = int(runtime_cfg.get("lost_reverse_speed", 20))
+    lost_reverse_duration_s = float(runtime_cfg.get("lost_reverse_duration_s", 2.0))
+    lost_episode_start = None
+    lost_reverse_until = 0.0
+    lost_recovery_done = False
 
     print(f"=== Phase 1: 라인 추종 주행 시작 (mode={mode}) ===")
     print("키 입력:")
@@ -382,6 +456,15 @@ def run(cfg, args) -> None:
                     lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
                     lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", CONTROL_WINDOW)
                     lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", CONTROL_WINDOW)
+
+                # YOLO 면적 임계 실시간 조정(x1000 스케일)
+                yolo_min_area_ratio = {
+                    "red": cv2.getTrackbarPos("yolo_area_red_x1000", CONTROL_WINDOW) / 1000.0,
+                    "green": cv2.getTrackbarPos("yolo_area_green_x1000", CONTROL_WINDOW) / 1000.0,
+                    "oo": cv2.getTrackbarPos("yolo_area_oo_x1000", CONTROL_WINDOW) / 1000.0,
+                    "xx": cv2.getTrackbarPos("yolo_area_xx_x1000", CONTROL_WINDOW) / 1000.0,
+                    "car": cv2.getTrackbarPos("yolo_area_car_x1000", CONTROL_WINDOW) / 1000.0,
+                }
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
@@ -403,6 +486,8 @@ def run(cfg, args) -> None:
                     lab_gray_b_dev = int(lab_cfg.get("gray_b_dev", perception_cfg.get("lab_gray_b_dev", 15)))
                 else:
                     detect_value = int(hsv_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
+
+                yolo_min_area_ratio = dict(yolo_min_area_ratio_init)
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -441,6 +526,9 @@ def run(cfg, args) -> None:
             dt = now - last_time
             last_time = now
 
+            # 논블로킹 비프 시퀀스 진행
+            beep_seq.tick(now)
+
             if heading_used is None:
                 direction = "LOST"
                 steering_output = 0.0
@@ -473,22 +561,75 @@ def run(cfg, args) -> None:
             controller.base_speed = effective_speed
             controller.steer_scale = effective_steer_scale
 
+            # YOLO 추론 → 안정화 이벤트
+            detections = {}
+            triggers = {}
+            if yolo_detector is not None:
+                yolo_detector.update_thresholds(yolo_min_area_ratio)
+                detections, triggers = yolo_detector.step(frame, now)
+
+            # 미션 FSM으로 override
+            mission_cmd = mission_fsm.update(
+                lane_steering=steering_output,
+                lane_speed=effective_speed,
+                detections=detections,
+                triggers=triggers,
+                now=now,
+            )
+            controller.base_speed = mission_cmd.base_speed
+
             applied_left_speed = 0
             applied_right_speed = 0
             if motors_enabled:
-                if state == "LOST":
+                if mission_cmd.force_stop:
                     controller.stop()
-                    if runtime_cfg.get("fail_safe_beep", True):
-                        hardware.beep(0.05)
+                    direction = mission_cmd.state
+                    lost_episode_start = None
+                    lost_reverse_until = 0.0
+                    lost_recovery_done = False
+                elif state == "LOST" and mission_cmd.state == "DRIVE":
+                    # LOST 에피소드 시작 시점 기록
+                    if lost_episode_start is None:
+                        lost_episode_start = now
+                        lost_recovery_done = False
+
+                    if now < lost_reverse_until:
+                        hardware.drive(-lost_reverse_speed, -lost_reverse_speed)
+                        applied_left_speed = -lost_reverse_speed
+                        applied_right_speed = -lost_reverse_speed
+                        direction = "LOST_REVERSE"
+                    else:
+                        elapsed = now - float(lost_episode_start)
+                        if (not lost_recovery_done) and elapsed >= lost_wait_s:
+                            lost_reverse_until = now + lost_reverse_duration_s
+                            lost_recovery_done = True
+                            hardware.drive(-lost_reverse_speed, -lost_reverse_speed)
+                            applied_left_speed = -lost_reverse_speed
+                            applied_right_speed = -lost_reverse_speed
+                            direction = "LOST_REVERSE"
+                        else:
+                            controller.stop()
+                            direction = "LOST"
+                            if runtime_cfg.get("fail_safe_beep", True):
+                                hardware.beep(0.05)
                 else:
-                    applied_left_speed, applied_right_speed, drive_dir = controller.drive(steering_output)
-                    direction = state if state != "STRAIGHT" else drive_dir
+                    lost_episode_start = None
+                    lost_reverse_until = 0.0
+                    lost_recovery_done = False
+                    applied_left_speed, applied_right_speed, drive_dir = controller.drive(mission_cmd.steering)
+                    if mission_cmd.state != "DRIVE":
+                        direction = mission_cmd.state
+                    else:
+                        direction = state if state != "STRAIGHT" else drive_dir
             else:
                 # 모터 일시정지 상태: 출력만 갱신, 실제 구동은 중단
                 if motors_was_enabled:
                     controller.stop()
                 direction = "PAUSE"
                 state = "PAUSE"
+                lost_episode_start = None
+                lost_reverse_until = 0.0
+                lost_recovery_done = False
 
             fps = fps_timer.lap()
 
@@ -497,7 +638,8 @@ def run(cfg, args) -> None:
                     f"heading_err={heading_used if heading_used is not None else 'None'} "
                     f"slope={slope_norm if slope_norm is not None else 'None'} "
                     f"state={state} "
-                    f"steer={steering_output:.2f} "
+                    f"mission={mission_cmd.state} "
+                    f"steer={mission_cmd.steering:.2f} "
                     f"speed_l={applied_left_speed} "
                     f"speed_r={applied_right_speed}"
                 )
@@ -508,14 +650,65 @@ def run(cfg, args) -> None:
                     debug_input,
                     direction,
                     centroid_x,
-                    steering_output,
+                    mission_cmd.steering,
                     fps,
                     heading=slope_norm,
                     heading_offset=heading_used,
                     turn_thresholds=(turn_slope_thresh, turn_offset_thresh),
                     centers=heading_centers,
                 )
-                cv2.imshow("phase1/frame", frame_with_roi)
+                # YOLO 시각화(크기 조건과 무관하게 raw 박스 전부 표시)
+                # 트리거된 클래스는 노란색, 그 외는 클래스별 기본색
+                display_frame = frame_with_roi.copy()
+                if yolo_detector is not None and getattr(yolo_detector, "last_results", None):
+                    try:
+                        r0 = yolo_detector.last_results[0]
+                        boxes = getattr(r0, "boxes", None) or []
+                        names_lc = {
+                            k: str(v).lower() for k, v in getattr(yolo_detector.model, "names", {}).items()
+                        }
+                        base_colors = {
+                            "red": (0, 0, 255),
+                            "green": (0, 255, 0),
+                            "oo": (255, 255, 255),
+                            "xx": (255, 0, 0),
+                            "car": (255, 0, 0),
+                        }
+                        trigger_color = (0, 255, 255)
+                        frame_area = float(width * height) if width and height else 0.0
+                        for box in boxes:
+                            cls_id = int(box.cls.item()) if hasattr(box.cls, "item") else int(box.cls)
+                            cls_name = names_lc.get(cls_id, "")
+
+                            x1, y1, x2, y2 = box.xyxy[0].tolist()
+                            x1_i, y1_i, x2_i, y2_i = int(x1), int(y1), int(x2), int(y2)
+
+                            color = base_colors.get(cls_name, (200, 200, 200))
+                            # 임계(min_area_ratio) 이상이면 트리거 여부와 관계없이 노란색 표시
+                            thr = yolo_min_area_ratio.get(cls_name)
+                            if thr is not None and frame_area > 0:
+                                area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+                                ratio = area / frame_area
+                                if ratio >= thr:
+                                    color = trigger_color
+
+                            cv2.rectangle(display_frame, (x1_i, y1_i), (x2_i, y2_i), color, 2)
+
+                            conf_val = float(box.conf.item()) if hasattr(box.conf, "item") else float(box.conf)
+                            label = cls_name or str(cls_id)
+                            cv2.putText(
+                                display_frame,
+                                f"{label} {conf_val:.2f}",
+                                (x1_i, max(0, y1_i - 5)),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.5,
+                                color,
+                                1,
+                            )
+                    except Exception:
+                        display_frame = frame_with_roi
+
+                cv2.imshow("phase1/frame", display_frame)
                 cv2.imshow("phase1/binary", debug_binary)
 
                 key = cv2.waitKey(1) & 0xFF

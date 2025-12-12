@@ -26,7 +26,8 @@ class VehicleController:
     def _clamp(value: float, min_value: float, max_value: float) -> float:
         return max(min_value, min(max_value, value))
 
-    def drive(self, steering_command: float) -> Tuple[int, int, str]:
+    def compute_speeds(self, steering_command: float) -> Tuple[int, int, str]:
+        """조향 입력으로 좌/우 속도를 계산만 한다(하드웨어 출력 없음)."""
         steer = steering_command * self.steer_scale
         if abs(steer) < self.deadband:
             steer = 0.0
@@ -38,8 +39,6 @@ class VehicleController:
         left_speed = self._clamp(left_speed, -self.speed_limit, self.speed_limit)
         right_speed = self._clamp(right_speed, -self.speed_limit, self.speed_limit)
 
-        self.hardware.drive(int(left_speed), int(right_speed))
-
         direction = "UP"
         if steer < -1e-3:
             direction = "LEFT"
@@ -47,6 +46,11 @@ class VehicleController:
             direction = "RIGHT"
 
         return int(left_speed), int(right_speed), direction
+
+    def drive(self, steering_command: float) -> Tuple[int, int, str]:
+        left_speed, right_speed, direction = self.compute_speeds(steering_command)
+        self.hardware.drive(int(left_speed), int(right_speed))
+        return left_speed, right_speed, direction
 
     def stop(self) -> None:
         self.hardware.stop()

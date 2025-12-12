@@ -5,9 +5,12 @@
 ## 리포 구조
 ```
 P_project/
-├ README.md
+├ Readme.md
 ├ configs/                 # 설정(YAML)
-│  └ phase1_pid.yaml       # ROI, Lab/HSV 임계, PID/턴/헤딩, 런타임 옵션
+│  └ phase1_pid.yaml       # ROI, Lab/HSV 임계, PID/턴/헤딩, YOLO/미션/LOST 복구 옵션
+├ models/
+│  └ yolo/
+│     └ best.pt            # 학습된 YOLOv8 모델(라벨: red/green/oo/xx/car)
 ├ scripts/
 │  └ run_phase1.py         # 실행 엔트리(phase1_baseline 호출)
 └ raspbot/                 # 소스 패키지
@@ -17,7 +20,11 @@ P_project/
    │  ├ lane_detection_hsv.py   # HSV 차선 검출
    │  ├ lane_detection_lab.py   # Lab 차선 검출
    │  ├ preprocessing.py        # ROI/IPM 계산
-   │  └ visualization.py        # 디버그 오버레이
+   │  ├ visualization.py        # 디버그 오버레이
+   │  ├ yolo_events.py          # YOLO 안정화 이벤트 공급자
+   │  └ yolo_stop_on_red.py     # YOLO 단독 정지 테스트
+   ├ planning/             # 행동 계획/미션 FSM
+   │  └ mission_fsm.py          # Layer B 미션 FSM + 논블로킹 비프 시퀀서
    ├ runtime/
    │  └ phase1_baseline.py      # HSV/Lab 통합 실행 루프
    └ utils/                # FPS 측정, 설정 로더
@@ -45,6 +52,7 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
   - `hsv.detect_value`: 회색 밝기 임계  
   - `lab.detect_value`: L 밝기 임계  
   - `lab.red_l_min/red_a_min/red_b_min`, `lab.gray_a_dev/gray_b_dev`: Lab 임계값(L/a/b 최소 혹은 a/b 편차)
+  - `yolo`: YOLOv8 이벤트 인식 설정(모델 경로/입력크기/신뢰도, Confirm/쿨다운, `min_area_ratio.{red,green,oo,xx,car}`)
 - `control`  
   - `base_speed`, `speed_limit`, `steer_limit`, `steer_scale`, `steer_deadband`  
   - PID: `kp`, `ki`, `kd`  
@@ -52,6 +60,10 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
   - `heading`: `smooth_alpha`, `connect_close_px`, `merge_gap_px`, `p1_margin_px` (`inner_min_speed`는 Lab/HSV 변형에 미적용)
 - `runtime`  
   - `show_windows`, `print_debug`, `fail_safe_beep`, `fps_window`, `headless_delay`, `enable_sliders`
+  - LOST 복구: `lost_recovery_wait_s`, `lost_reverse_speed`, `lost_reverse_duration_s`
+- `mission`
+  - `hazard.beep_delay`
+  - `parking.approach_speed`, `parking.missing_frames`, `parking.steer_kp`
 
 ## 런타임 제어(키)
 - `ESC` / `q`: 종료
@@ -65,19 +77,22 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
 - 턴 파라미터: `turn_slope_thr_x100`, `turn_offset_thr_x100`, `turn_speed_scale_x100`, `turn_steer_scale_x100`
 - 헤딩 파라미터: `heading_smooth_x100`, `heading_connect_close_px`, `heading_merge_gap_px`, `heading_p1_margin_px`
 - 카메라/서보: `brightness`, `contrast`, `saturation`, `exposure`, `gain`, `servo1_yaw`, `servo2_pitch`
+- YOLO 면적 임계: `yolo_area_red_x1000`, `yolo_area_green_x1000`, `yolo_area_oo_x1000`, `yolo_area_xx_x1000`, `yolo_area_car_x1000`
 
 ## 주요 처리 흐름
-1) 프레임 입력 → ROI 계산/오버레이 (`calculate_roi_points`, `apply_roi_overlay`)  
-2) IPM 변환 (`warp_perspective`)  
-3) 이진화: HSV 모드 또는 Lab 모드 `detect_road_lines`  
-4) 중심 오차 계산 (`compute_lane_error`)  
-5) 헤딩 추정 (`estimate_heading`, `target_mask`로 도로 영역 연결/병합)  
-6) PID로 조향 계산 → 상태별 속도/조향 스케일 적용 → `VehicleController.drive`  
-7) 디버그 시각화(`visualize_binary_debug`): `target_mask` 반전 오버레이, 헤딩/상태/FPS 표시
+1) 프레임 입력(원본)  
+2) YOLO 추론 → `yolo_events`에서 Confirm/min_area_ratio/cooldown 안정화 후 이벤트 생성  
+3) ROI 계산/오버레이 → IPM 변환 → HSV/Lab 차선 이진화  
+4) 헤딩 추정 → PID로 조향 계산  
+5) Layer A(차선 상태: STRAIGHT/TURN/LOST)로 속도·조향 스케일링  
+6) Layer B(미션 FSM: DRIVE/WAIT_TRAFFIC_LIGHT/HAZARD/PARKING)로 출력 override  
+7) LOST가 3초 지속되면 2초 후진 복구 수행  
+8) 모터/서보 출력 및 디버그 시각화(차선 바이너리 + YOLO 박스)
 
 ## 디버그/로그
-- 모터 활성 상태에서만 터미널 로그 출력: `heading_err`, `slope`, `state`, `steer`, `speed_l/r`
-- OpenCV 창: `phase1/frame`(ROI 오버레이), `phase1/binary`(선택 도로 영역 강조)
+- 모터 활성 상태에서만 터미널 로그 출력: `heading_err`, `slope`, `state`, `mission`, `steer`, `speed_l/r`
+- OpenCV 창: `phase1/frame`(ROI+YOLO 박스 오버레이), `phase1/binary`(선택 도로 영역 강조)
+- YOLO 박스 색: 클래스 기본색, 임계(`min_area_ratio`) 이상이면 노란색
 - 모터 정지 시에는 출력/구동이 멈추며, `target_mask`를 반전한 디버그 바이너리가 계속 표시됩니다.
 
 ## 개발 팁
