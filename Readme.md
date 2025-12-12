@@ -13,21 +13,33 @@ P_project/
 │     └ best.pt            # 학습된 YOLOv8 모델(라벨: red/green/oo/xx/car)
 ├ scripts/
 │  └ run_phase1.py         # 실행 엔트리(phase1_baseline 호출)
+│
 └ raspbot/                 # 소스 패키지
-   ├ hardware/             # 카메라/모터/서보 HAL (RaspbotHardware, Camera)
-   ├ control/              # PID/차량 제어 (PIDController, VehicleController)
+   ├ hardware/             # 카메라/모터/서보 HAL
+   │  ├ camera.py               # 카메라 HAL (Camera, CameraConfig)
+   │  └ raspbot.py              # RaspbotHardware/MockRaspbot
+   │
+   ├ control/              # PID/차량 제어
+   │  ├ pid.py                  # PIDController
+   │  └ vehicle_controller.py   # VehicleController
+   │
    ├ perception/           # 인지
    │  ├ lane_detection_hsv.py   # HSV 차선 검출
-   │  ├ lane_detection_lab.py   # Lab 차선 검출
+   │  ├ lane_detection_lab.py   # Lab 차선 검출/헤딩 추정
    │  ├ preprocessing.py        # ROI/IPM 계산
    │  ├ visualization.py        # 디버그 오버레이
    │  ├ yolo_events.py          # YOLO 안정화 이벤트 공급자
    │  └ yolo_stop_on_red.py     # YOLO 단독 정지 테스트
+   │
    ├ planning/             # 행동 계획/미션 FSM
    │  └ mission_fsm.py          # Layer B 미션 FSM + 논블로킹 비프 시퀀서
+   │
    ├ runtime/
    │  └ phase1_baseline.py      # HSV/Lab 통합 실행 루프
-   └ utils/                # FPS 측정, 설정 로더
+   │
+   └ utils/                # FPS 측정/설정 로더
+      ├ config_loader.py        # YAML 로더
+      └ timing.py               # FPSTimer
 ```
 
 ## 실행하기
