@@ -81,11 +81,12 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
 
 ## 주요 처리 흐름
 1) 프레임 입력(원본)  
-2) YOLO 추론 → `yolo_events`에서 Confirm/min_area_ratio/cooldown 안정화 후 이벤트 생성  
-3) ROI 계산/오버레이 → IPM 변환 → HSV/Lab 차선 이진화  
-4) 헤딩 추정 → PID로 조향 계산  
-5) Layer A(차선 상태: STRAIGHT/TURN/LOST)로 속도·조향 스케일링  
-6) Layer B(미션 FSM: DRIVE/WAIT_TRAFFIC_LIGHT/HAZARD/PARKING)로 출력 override  
+2) ROI 계산/오버레이 → IPM 변환 → HSV/Lab 차선 이진화  
+3) 헤딩 추정 → PID로 조향 계산  
+4) Layer A(차선 상태: STRAIGHT/TURN/LOST)로 속도·조향 스케일링  
+5) 같은 원본 프레임으로 YOLO 추론 수행  
+   - `yolo_events`에서 Confirm/min_area_ratio/cooldown 안정화 후 이벤트 생성  
+6) Layer B(미션 FSM: DRIVE/WAIT_TRAFFIC_LIGHT/HAZARD/PARKING)로 최종 출력 override  
 7) LOST가 3초 지속되면 2초 후진 복구 수행  
 8) 모터/서보 출력 및 디버그 시각화(차선 바이너리 + YOLO 박스)
 
