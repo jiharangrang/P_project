@@ -69,7 +69,7 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
   - `base_speed`, `speed_limit`, `steer_limit`, `steer_scale`, `steer_deadband`  
   - PID: `kp`, `ki`, `kd`  
   - `turn`: `slope_thresh`, `offset_thresh`, `speed_scale`, `steer_scale`  
-  - `heading`: `smooth_alpha`, `connect_close_px`, `merge_gap_px`, `p1_margin_px` (`inner_min_speed`는 Lab/HSV 변형에 미적용)
+  - `heading`: `smooth_alpha`, `connect_close_px`, `merge_gap_px`, `p1_margin_px`
 - `runtime`  
   - `show_windows`, `print_debug`, `fail_safe_beep`, `fps_window`, `headless_delay`, `enable_sliders`
   - LOST 복구: `lost_recovery_wait_s`, `lost_reverse_speed`, `lost_reverse_duration_s`
@@ -109,6 +109,5 @@ python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
 - 모터 정지 시에는 출력/구동이 멈추며, `target_mask`를 반전한 디버그 바이너리가 계속 표시됩니다.
 
 ## 개발 팁
-- 모드를 바꿀 때는 원하는 변형 파일을 `lane_detection.py`, `phase1_baseline.py`로 교체한 뒤 실행합니다.
 - Lab 임계 조정은 `detect_value`(L 밝기)와 `lab_red_*`/`lab_gray_*` 슬라이더를 함께 조절해 그림자·반사에 맞추세요.
-- HSV 모드에서 빨강 범위를 바꾸려면 `lane_detection_old.py` 내 `lower/upper_red` 값을 직접 수정해야 합니다.
+
