@@ -18,7 +18,10 @@ from raspbot.planning.mission_fsm import BeepSequencer, MissionFSM
 from raspbot.utils import FpsTimer, load_config
 
 
+VISION_WINDOW = "phase1/vision"
 CONTROL_WINDOW = "phase1/controls"
+CAMERA_WINDOW = "phase1/camera"
+YOLO_WINDOW = "phase1/yolo"
 MODE_CHOICES = ("hsv", "lab")
 
 
@@ -63,48 +66,54 @@ def build_camera(cfg) -> Camera:
 
 def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mode: str) -> None:
     """실시간 조정을 위한 트랙바 UI 생성."""
+    cv2.namedWindow(VISION_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(VISION_WINDOW, 420, 420)
     cv2.namedWindow(CONTROL_WINDOW, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(CONTROL_WINDOW, 420, 720)
+    cv2.resizeWindow(CONTROL_WINDOW, 420, 540)
+    cv2.namedWindow(CAMERA_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(CAMERA_WINDOW, 420, 420)
+    cv2.namedWindow(YOLO_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(YOLO_WINDOW, 420, 260)
 
     # 공통 ROI 및 밝기 임계
-    cv2.createTrackbar("roi_top", CONTROL_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
-    cv2.createTrackbar("roi_bottom", CONTROL_WINDOW, int(perception_cfg.get("roi_bottom", 946)), 1000, lambda x: None)
+    cv2.createTrackbar("roi_top", VISION_WINDOW, int(perception_cfg.get("roi_top", 871)), 1000, lambda x: None)
+    cv2.createTrackbar("roi_bottom", VISION_WINDOW, int(perception_cfg.get("roi_bottom", 946)), 1000, lambda x: None)
     mode_cfg = perception_cfg.get(mode, {})
     detect_init = int(mode_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
-    cv2.createTrackbar("detect_value", CONTROL_WINDOW, detect_init, 255, lambda x: None)
+    cv2.createTrackbar("detect_value", VISION_WINDOW, detect_init, 255, lambda x: None)
 
     if mode == "lab":
         cv2.createTrackbar(
             "lab_red_l_min",
-            CONTROL_WINDOW,
+            VISION_WINDOW,
             int(mode_cfg.get("red_l_min", perception_cfg.get("lab_red_l_min", 30))),
             255,
             lambda x: None,
         )
         cv2.createTrackbar(
             "lab_red_a_min",
-            CONTROL_WINDOW,
+            VISION_WINDOW,
             int(mode_cfg.get("red_a_min", perception_cfg.get("lab_red_a_min", 150))),
             255,
             lambda x: None,
         )
         cv2.createTrackbar(
             "lab_red_b_min",
-            CONTROL_WINDOW,
+            VISION_WINDOW,
             int(mode_cfg.get("red_b_min", perception_cfg.get("lab_red_b_min", 140))),
             255,
             lambda x: None,
         )
         cv2.createTrackbar(
             "lab_gray_a_dev",
-            CONTROL_WINDOW,
+            VISION_WINDOW,
             int(mode_cfg.get("gray_a_dev", perception_cfg.get("lab_gray_a_dev", 15))),
             128,
             lambda x: None,
         )
         cv2.createTrackbar(
             "lab_gray_b_dev",
-            CONTROL_WINDOW,
+            VISION_WINDOW,
             int(mode_cfg.get("gray_b_dev", perception_cfg.get("lab_gray_b_dev", 15))),
             128,
             lambda x: None,
@@ -205,18 +214,18 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mod
 
     # 카메라 설정
     cam_cfg = hardware_cfg.get("camera", {})
-    cv2.createTrackbar("brightness", CONTROL_WINDOW, int(cam_cfg.get("brightness", 0)), 200, lambda x: None)
-    cv2.createTrackbar("contrast", CONTROL_WINDOW, int(cam_cfg.get("contrast", 0)), 200, lambda x: None)
-    cv2.createTrackbar("saturation", CONTROL_WINDOW, int(cam_cfg.get("saturation", 50)), 200, lambda x: None)
-    cv2.createTrackbar("exposure", CONTROL_WINDOW, int(cam_cfg.get("exposure", 100)), 300, lambda x: None)
-    cv2.createTrackbar("gain", CONTROL_WINDOW, int(cam_cfg.get("gain", 0)), 200, lambda x: None)
+    cv2.createTrackbar("brightness", CAMERA_WINDOW, int(cam_cfg.get("brightness", 0)), 200, lambda x: None)
+    cv2.createTrackbar("contrast", CAMERA_WINDOW, int(cam_cfg.get("contrast", 0)), 200, lambda x: None)
+    cv2.createTrackbar("saturation", CAMERA_WINDOW, int(cam_cfg.get("saturation", 50)), 200, lambda x: None)
+    cv2.createTrackbar("exposure", CAMERA_WINDOW, int(cam_cfg.get("exposure", 100)), 300, lambda x: None)
+    cv2.createTrackbar("gain", CAMERA_WINDOW, int(cam_cfg.get("gain", 0)), 200, lambda x: None)
 
     # 서보 각도 (카메라 앵글)
     servo_defaults = hardware_cfg.get("servo_defaults", (70, 10))
-    cv2.createTrackbar("servo1_yaw", CONTROL_WINDOW, int(servo_defaults[0]), 180, lambda x: None)
+    cv2.createTrackbar("servo1_yaw", CAMERA_WINDOW, int(servo_defaults[0]), 180, lambda x: None)
     cv2.createTrackbar(
         "servo2_pitch",
-        CONTROL_WINDOW,
+        CAMERA_WINDOW,
         int(servo_defaults[1]),
         int(RaspbotHardware.SERVO_PITCH_LIMIT),
         lambda x: None,
@@ -230,13 +239,13 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mod
         return int(float(min_area_cfg.get(name, default)) * 1000)
 
     max_ratio_x1000 = 200
-    cv2.createTrackbar("yolo_area_red_x1000", CONTROL_WINDOW, _init_ratio("red", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar("yolo_area_red_x1000", YOLO_WINDOW, _init_ratio("red", 0.0), max_ratio_x1000, lambda x: None)
     cv2.createTrackbar(
-        "yolo_area_green_x1000", CONTROL_WINDOW, _init_ratio("green", 0.0), max_ratio_x1000, lambda x: None
+        "yolo_area_green_x1000", YOLO_WINDOW, _init_ratio("green", 0.0), max_ratio_x1000, lambda x: None
     )
-    cv2.createTrackbar("yolo_area_oo_x1000", CONTROL_WINDOW, _init_ratio("oo", 0.0), max_ratio_x1000, lambda x: None)
-    cv2.createTrackbar("yolo_area_xx_x1000", CONTROL_WINDOW, _init_ratio("xx", 0.0), max_ratio_x1000, lambda x: None)
-    cv2.createTrackbar("yolo_area_car_x1000", CONTROL_WINDOW, _init_ratio("car", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar("yolo_area_oo_x1000", YOLO_WINDOW, _init_ratio("oo", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar("yolo_area_xx_x1000", YOLO_WINDOW, _init_ratio("xx", 0.0), max_ratio_x1000, lambda x: None)
+    cv2.createTrackbar("yolo_area_car_x1000", YOLO_WINDOW, _init_ratio("car", 0.0), max_ratio_x1000, lambda x: None)
 
 
 def run(cfg, args) -> None:
@@ -404,9 +413,9 @@ def run(cfg, args) -> None:
         while True:
             if enable_sliders:
                 # ROI 및 검출 임계값 업데이트
-                roi_top = cv2.getTrackbarPos("roi_top", CONTROL_WINDOW)
-                roi_bottom = cv2.getTrackbarPos("roi_bottom", CONTROL_WINDOW)
-                detect_value = cv2.getTrackbarPos("detect_value", CONTROL_WINDOW)
+                roi_top = cv2.getTrackbarPos("roi_top", VISION_WINDOW)
+                roi_bottom = cv2.getTrackbarPos("roi_bottom", VISION_WINDOW)
+                detect_value = cv2.getTrackbarPos("detect_value", VISION_WINDOW)
 
                 # PID/속도 파라미터 업데이트 (trackbar는 정수이므로 스케일링)
                 pid.kp = cv2.getTrackbarPos("pid_kp_x100", CONTROL_WINDOW) / 100.0
@@ -416,11 +425,11 @@ def run(cfg, args) -> None:
                 steer_scale_slider = cv2.getTrackbarPos("steer_scale_x100", CONTROL_WINDOW) / 100.0
 
                 # 카메라 설정 실시간 적용
-                brightness = cv2.getTrackbarPos("brightness", CONTROL_WINDOW)
-                contrast = cv2.getTrackbarPos("contrast", CONTROL_WINDOW)
-                saturation = cv2.getTrackbarPos("saturation", CONTROL_WINDOW)
-                exposure = cv2.getTrackbarPos("exposure", CONTROL_WINDOW)
-                gain = cv2.getTrackbarPos("gain", CONTROL_WINDOW)
+                brightness = cv2.getTrackbarPos("brightness", CAMERA_WINDOW)
+                contrast = cv2.getTrackbarPos("contrast", CAMERA_WINDOW)
+                saturation = cv2.getTrackbarPos("saturation", CAMERA_WINDOW)
+                exposure = cv2.getTrackbarPos("exposure", CAMERA_WINDOW)
+                gain = cv2.getTrackbarPos("gain", CAMERA_WINDOW)
                 cam_settings = (brightness, contrast, saturation, exposure, gain)
                 if cam_settings != last_cam_settings:
                     camera.apply_settings(
@@ -433,8 +442,8 @@ def run(cfg, args) -> None:
                     last_cam_settings = cam_settings
 
                 # 서보 각도 실시간 적용 (카메라 앵글)
-                servo1 = cv2.getTrackbarPos("servo1_yaw", CONTROL_WINDOW)
-                servo2 = cv2.getTrackbarPos("servo2_pitch", CONTROL_WINDOW)
+                servo1 = cv2.getTrackbarPos("servo1_yaw", CAMERA_WINDOW)
+                servo2 = cv2.getTrackbarPos("servo2_pitch", CAMERA_WINDOW)
                 if (servo1, servo2) != last_servo_angles:
                     hardware.set_servo(1, servo1)
                     hardware.set_servo(2, servo2)
@@ -451,19 +460,19 @@ def run(cfg, args) -> None:
                 heading_p1_margin_px = cv2.getTrackbarPos("heading_p1_margin_px", CONTROL_WINDOW)
 
                 if mode == "lab":
-                    lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", CONTROL_WINDOW)
-                    lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", CONTROL_WINDOW)
-                    lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", CONTROL_WINDOW)
-                    lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", CONTROL_WINDOW)
-                    lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", CONTROL_WINDOW)
+                    lab_red_l_min = cv2.getTrackbarPos("lab_red_l_min", VISION_WINDOW)
+                    lab_red_a_min = cv2.getTrackbarPos("lab_red_a_min", VISION_WINDOW)
+                    lab_red_b_min = cv2.getTrackbarPos("lab_red_b_min", VISION_WINDOW)
+                    lab_gray_a_dev = cv2.getTrackbarPos("lab_gray_a_dev", VISION_WINDOW)
+                    lab_gray_b_dev = cv2.getTrackbarPos("lab_gray_b_dev", VISION_WINDOW)
 
                 # YOLO 면적 임계 실시간 조정(x1000 스케일)
                 yolo_min_area_ratio = {
-                    "red": cv2.getTrackbarPos("yolo_area_red_x1000", CONTROL_WINDOW) / 1000.0,
-                    "green": cv2.getTrackbarPos("yolo_area_green_x1000", CONTROL_WINDOW) / 1000.0,
-                    "oo": cv2.getTrackbarPos("yolo_area_oo_x1000", CONTROL_WINDOW) / 1000.0,
-                    "xx": cv2.getTrackbarPos("yolo_area_xx_x1000", CONTROL_WINDOW) / 1000.0,
-                    "car": cv2.getTrackbarPos("yolo_area_car_x1000", CONTROL_WINDOW) / 1000.0,
+                    "red": cv2.getTrackbarPos("yolo_area_red_x1000", YOLO_WINDOW) / 1000.0,
+                    "green": cv2.getTrackbarPos("yolo_area_green_x1000", YOLO_WINDOW) / 1000.0,
+                    "oo": cv2.getTrackbarPos("yolo_area_oo_x1000", YOLO_WINDOW) / 1000.0,
+                    "xx": cv2.getTrackbarPos("yolo_area_xx_x1000", YOLO_WINDOW) / 1000.0,
+                    "car": cv2.getTrackbarPos("yolo_area_car_x1000", YOLO_WINDOW) / 1000.0,
                 }
             else:
                 # 슬라이더 미사용 시 기본 설정 유지

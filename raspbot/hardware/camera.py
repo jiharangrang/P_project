@@ -22,7 +22,7 @@ class CameraConfig:
 class Camera:
     def __init__(self, config: CameraConfig) -> None:
         self.config = config
-        self.cap = cv2.VideoCapture(config.index)
+        self.cap = cv2.VideoCapture(config.index, cv2.CAP_V4L2)
         self.apply_settings(
             brightness=config.brightness,
             contrast=config.contrast,
