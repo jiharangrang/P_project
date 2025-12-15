@@ -22,6 +22,8 @@ VISION_WINDOW = "phase1/vision"
 CONTROL_WINDOW = "phase1/controls"
 CAMERA_WINDOW = "phase1/camera"
 YOLO_WINDOW = "phase1/yolo"
+FRAME_WINDOW = "phase1/frame"
+BINARY_WINDOW = "phase1/binary"
 MODE_CHOICES = ("hsv", "lab")
 
 
@@ -265,6 +267,9 @@ def run(cfg, args) -> None:
 
     show_windows = runtime_cfg.get("show_windows", True) and not args.headless
     enable_sliders = runtime_cfg.get("enable_sliders", True) and show_windows
+    if show_windows:
+        cv2.namedWindow(FRAME_WINDOW, cv2.WINDOW_NORMAL)
+        cv2.namedWindow(BINARY_WINDOW, cv2.WINDOW_NORMAL)
 
     hardware = RaspbotHardware(
         use_led=hardware_cfg.get("use_led", True),
@@ -717,10 +722,17 @@ def run(cfg, args) -> None:
                     except Exception:
                         display_frame = frame_with_roi
 
-                cv2.imshow("phase1/frame", display_frame)
-                cv2.imshow("phase1/binary", debug_binary)
+                cv2.imshow(FRAME_WINDOW, display_frame)
+                cv2.imshow(BINARY_WINDOW, debug_binary)
 
                 key = cv2.waitKey(1) & 0xFF
+                try:
+                    if cv2.getWindowProperty(FRAME_WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+                        break
+                    if cv2.getWindowProperty(BINARY_WINDOW, cv2.WND_PROP_VISIBLE) < 1:
+                        break
+                except cv2.error:
+                    pass
                 if key in (27, ord("q")):
                     break
                 elif key == ord("s"):  # 's' 키: 모터 토글
