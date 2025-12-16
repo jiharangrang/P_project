@@ -40,11 +40,11 @@ perception:
     confirm_frames: 3
     car_cooldown_s: 2.0
     min_area_ratio:
-      red: 0.03
-      green: 0.03
-      oo: 0.20
-      xx: 0.20
-      car: 0.05
+      red: 0.003
+      green: 0.003
+      oo: 0.015
+      xx: 0.015
+      car: 0.005
 
 control:
   base_speed: 40        # 직진 기본 속도
@@ -82,6 +82,6 @@ mission:
   hazard:
     beep_delay: 0.5
   parking:
-    approach_speed: 20
-    missing_frames: 3
-    steer_kp: 0.3
+    approach_speed: 10
+    missing_frames: 30
+    steer_kp: 0.01
