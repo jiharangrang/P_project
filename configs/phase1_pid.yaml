@@ -40,11 +40,11 @@ perception:
     confirm_frames: 3
     car_cooldown_s: 2.0
     min_area_ratio:
-      red: 0.003
-      green: 0.003
+      red: 0.001
+      green: 0.001
       oo: 0.005
       xx: 0.015
-      car: 0.005
+      car: 0.010
 
 control:
   base_speed: 40        # 직진 기본 속도
@@ -61,7 +61,7 @@ control:
     slope_thresh: 0.01     # heading 기울기 임계
     offset_thresh: 0.10    # 중심 오차 임계
     speed_scale: 0.50      # 턴 시 감속 계수
-    steer_scale: 1.25      # 턴 시 조향 스케일 배율
+    steer_scale: 1.35      # 턴 시 조향 스케일 배율
 
   # heading(주황선) 기반 조향 가중치
   heading:
@@ -84,4 +84,4 @@ mission:
   parking:
     approach_speed: 10
     missing_frames: 15
-    steer_kp: 0.2
+    steer_kp: 0.15
