@@ -13,6 +13,7 @@ from raspbot.control import PIDController, VehicleController
 from raspbot.hardware import Camera, CameraConfig, RaspbotHardware
 from raspbot.perception import apply_roi_overlay, calculate_roi_points, visualize_binary_debug, warp_perspective
 from raspbot.perception import lane_detection_hsv, lane_detection_lab
+from raspbot.perception.yolo_async import YoloAsyncRunner
 from raspbot.perception.yolo_events import YoloEventDetector
 from raspbot.planning.mission_fsm import BeepSequencer, MissionFSM
 from raspbot.utils import FpsTimer, load_config
@@ -249,6 +250,11 @@ def create_trackbars(perception_cfg, control_cfg, hardware_cfg, runtime_cfg, mod
     cv2.createTrackbar("yolo_area_xx_x1000", YOLO_WINDOW, _init_ratio("xx", 0.0), max_ratio_x1000, lambda x: None)
     cv2.createTrackbar("yolo_area_car_x1000", YOLO_WINDOW, _init_ratio("car", 0.0), max_ratio_x1000, lambda x: None)
 
+    # YOLO 추론 주기(밀리초, 0이면 매 프레임 시도)
+    interval_ms = int(max(0.0, float(yolo_cfg.get("infer_interval_s", 0.0))) * 1000.0)
+    interval_ms = max(0, min(interval_ms, 1000))
+    cv2.createTrackbar("yolo_interval_ms", YOLO_WINDOW, interval_ms, 1000, lambda x: None)
+
 
 def run(cfg, args) -> None:
     hardware_cfg = cfg.get("hardware", {})
@@ -341,6 +347,7 @@ def run(cfg, args) -> None:
     }
     cooldown_s_cfg = dict(yolo_cfg.get("cooldown_s", {}) or {})
     cooldown_s_cfg.setdefault("car", float(yolo_cfg.get("car_cooldown_s", 3.0)))
+    yolo_infer_interval_s_init = max(0.0, float(yolo_cfg.get("infer_interval_s", 0.0)))
 
     yolo_detector = None
     if yolo_enabled:
@@ -368,6 +375,7 @@ def run(cfg, args) -> None:
         except Exception as e:
             print(f"[WARN] YOLO 초기화 실패: {e} → YOLO 비활성화")
             yolo_detector = None
+    yolo_runner = YoloAsyncRunner(yolo_detector, infer_interval_s=yolo_infer_interval_s_init) if yolo_detector else None
 
     beep_seq = BeepSequencer(hardware)
     mission_cfg = cfg.get("mission", {}) or {}
@@ -479,6 +487,7 @@ def run(cfg, args) -> None:
                     "xx": cv2.getTrackbarPos("yolo_area_xx_x1000", YOLO_WINDOW) / 1000.0,
                     "car": cv2.getTrackbarPos("yolo_area_car_x1000", YOLO_WINDOW) / 1000.0,
                 }
+                yolo_infer_interval_s = cv2.getTrackbarPos("yolo_interval_ms", YOLO_WINDOW) / 1000.0
             else:
                 # 슬라이더 미사용 시 기본 설정 유지
                 base_speed_slider = int(control_cfg.get("base_speed", 40))
@@ -502,6 +511,7 @@ def run(cfg, args) -> None:
                     detect_value = int(hsv_cfg.get("detect_value", perception_cfg.get("detect_value", 120)))
 
                 yolo_min_area_ratio = dict(yolo_min_area_ratio_init)
+                yolo_infer_interval_s = max(0.0, float(yolo_cfg.get("infer_interval_s", 0.0)))
 
             frame = camera.read()
             height, width = frame.shape[:2]
@@ -578,9 +588,12 @@ def run(cfg, args) -> None:
             # YOLO 추론 → 안정화 이벤트
             detections = {}
             triggers = {}
-            if yolo_detector is not None:
-                yolo_detector.update_thresholds(yolo_min_area_ratio)
-                detections, triggers = yolo_detector.step(frame, now)
+            yolo_raw_boxes = []
+            yolo_last_ts = 0.0
+            if yolo_runner is not None:
+                yolo_runner.update_settings(infer_interval_s=yolo_infer_interval_s, min_area_ratio=yolo_min_area_ratio)
+                yolo_runner.submit_frame(frame)
+                detections, triggers, yolo_raw_boxes, yolo_last_ts = yolo_runner.poll()
 
             # 미션 FSM으로 override
             mission_cmd = mission_fsm.update(
@@ -674,53 +687,37 @@ def run(cfg, args) -> None:
                 # YOLO 시각화(크기 조건과 무관하게 raw 박스 전부 표시)
                 # 트리거된 클래스는 노란색, 그 외는 클래스별 기본색
                 display_frame = frame_with_roi.copy()
-                if yolo_detector is not None and getattr(yolo_detector, "last_results", None):
-                    try:
-                        r0 = yolo_detector.last_results[0]
-                        boxes = getattr(r0, "boxes", None) or []
-                        names_lc = {
-                            k: str(v).lower() for k, v in getattr(yolo_detector.model, "names", {}).items()
-                        }
-                        base_colors = {
-                            "red": (0, 0, 255),
-                            "green": (0, 255, 0),
-                            "oo": (255, 255, 255),
-                            "xx": (255, 0, 0),
-                            "car": (255, 0, 0),
-                        }
-                        trigger_color = (0, 255, 255)
-                        frame_area = float(width * height) if width and height else 0.0
-                        for box in boxes:
-                            cls_id = int(box.cls.item()) if hasattr(box.cls, "item") else int(box.cls)
-                            cls_name = names_lc.get(cls_id, "")
+                if yolo_raw_boxes:
+                    base_colors = {
+                        "red": (0, 0, 255),
+                        "green": (0, 255, 0),
+                        "oo": (255, 255, 255),
+                        "xx": (255, 0, 0),
+                        "car": (255, 0, 0),
+                    }
+                    trigger_color = (0, 255, 255)
+                    for box in yolo_raw_boxes:
+                        cls_name = box.name
+                        x1, y1, x2, y2 = box.bbox_xyxy
+                        x1_i, y1_i, x2_i, y2_i = int(x1), int(y1), int(x2), int(y2)
 
-                            x1, y1, x2, y2 = box.xyxy[0].tolist()
-                            x1_i, y1_i, x2_i, y2_i = int(x1), int(y1), int(x2), int(y2)
+                        color = base_colors.get(cls_name, (200, 200, 200))
+                        thr = yolo_min_area_ratio.get(cls_name)
+                        if thr is not None and box.area_ratio >= thr:
+                            color = trigger_color
 
-                            color = base_colors.get(cls_name, (200, 200, 200))
-                            # 임계(min_area_ratio) 이상이면 트리거 여부와 관계없이 노란색 표시
-                            thr = yolo_min_area_ratio.get(cls_name)
-                            if thr is not None and frame_area > 0:
-                                area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-                                ratio = area / frame_area
-                                if ratio >= thr:
-                                    color = trigger_color
+                        cv2.rectangle(display_frame, (x1_i, y1_i), (x2_i, y2_i), color, 2)
 
-                            cv2.rectangle(display_frame, (x1_i, y1_i), (x2_i, y2_i), color, 2)
-
-                            conf_val = float(box.conf.item()) if hasattr(box.conf, "item") else float(box.conf)
-                            label = cls_name or str(cls_id)
-                            cv2.putText(
-                                display_frame,
-                                f"{label} {conf_val:.2f}",
-                                (x1_i, max(0, y1_i - 5)),
-                                cv2.FONT_HERSHEY_SIMPLEX,
-                                0.5,
-                                color,
-                                1,
-                            )
-                    except Exception:
-                        display_frame = frame_with_roi
+                        label = cls_name or str(box.cls_id)
+                        cv2.putText(
+                            display_frame,
+                            f"{label} {box.conf:.2f}",
+                            (x1_i, max(0, y1_i - 5)),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.5,
+                            color,
+                            1,
+                        )
 
                 cv2.imshow(FRAME_WINDOW, display_frame)
                 cv2.imshow(BINARY_WINDOW, debug_binary)
@@ -752,6 +749,8 @@ def run(cfg, args) -> None:
 
     finally:
         controller.stop()
+        if yolo_runner is not None:
+            yolo_runner.stop()
         camera.release()
         hardware.cleanup()
         if show_windows:

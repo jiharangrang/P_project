@@ -36,6 +36,7 @@ perception:
     model: models/yolo/best.pt
     imgsz: 320
     conf: 0.5
+    infer_interval_s: 0.1   # YOLO 추론 최소 간격(0이면 매 프레임 시도)
     confirm_frames: 3
     car_cooldown_s: 2.0
     min_area_ratio:
