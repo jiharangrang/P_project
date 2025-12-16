@@ -159,7 +159,7 @@ class MissionFSM:
                 steering = self.parking_steer_kp * det.center_x_norm * self.steer_limit
                 self._last_oo_center_x_norm = det.center_x_norm
             else:
-                steering = self.parking_steer_kp * self._last_oo_center_x_norm * self.steer_limit
+                steering = 0.0
 
         if force_stop:
             base_speed = 0
