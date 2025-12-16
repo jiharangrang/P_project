@@ -83,5 +83,5 @@ mission:
     beep_delay: 0.5
   parking:
     approach_speed: 10
-    missing_frames: 30
-    steer_kp: 0.01
+    missing_frames: 15
+    steer_kp: 0.3
