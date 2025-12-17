@@ -3,7 +3,7 @@ hardware:
   use_beep: true
   led_on_start: true
   beep_on_start: true
-  led_mode: 2
+  led_mode: 1
   servo_defaults: [87, 20]
   servo_neutral: [90, 25]
   camera:

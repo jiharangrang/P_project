@@ -408,6 +408,17 @@ def run(cfg, args) -> None:
     motors_was_enabled = motors_enabled
     controller.stop()
 
+    # 미션 FSM 상태에 따라 LED 모드 상시 유지 (주행/인지 로직과 분리)
+    drive_led_mode = int(hardware.led_mode)
+    mission_led_mode_by_state = {
+        MissionFSM.DRIVE: drive_led_mode,  # 평시 주행: YAML 기본 모드(예: 1)
+        MissionFSM.WAIT_TRAFFIC_LIGHT: 0,  # 빨간 신호 정지: OFF
+        MissionFSM.HAZARD_ACTION: 5,  # 위험정지: 5
+        MissionFSM.PARKING_APPROACH: 3,  # 주차 접근: 3
+        MissionFSM.PARKING_HOLD: 0,  # 파킹: OFF
+    }
+    last_led_mode = None
+
     # LOST 복구(3초 정지 → 2초 후진)
     lost_wait_s = float(runtime_cfg.get("lost_recovery_wait_s", 3.0))
     lost_reverse_speed = int(runtime_cfg.get("lost_reverse_speed", 20))
@@ -604,6 +615,10 @@ def run(cfg, args) -> None:
                 now=now,
             )
             controller.base_speed = mission_cmd.base_speed
+            desired_led_mode = mission_led_mode_by_state.get(mission_cmd.state, drive_led_mode)
+            if desired_led_mode != last_led_mode:
+                hardware.set_led_mode(desired_led_mode)
+                last_led_mode = desired_led_mode
 
             applied_left_speed = 0
             applied_right_speed = 0
