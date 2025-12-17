@@ -123,7 +123,7 @@ class MissionFSM:
 
         elif self.state == self.WAIT_TRAFFIC_LIGHT:
             # red가 동시에 보이면 green 트리거 무시(깜빡임 안정화)
-            if triggers.get("green") and "red" not in detections:
+            if "red" not in detections:
                 self.state = self.DRIVE
 
         elif self.state == self.HAZARD_ACTION:
