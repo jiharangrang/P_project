@@ -98,7 +98,7 @@ class MissionFSM:
 
         # 비프 패턴(traffic: 동일음 3회, hazard: 다른 패턴 3회)
         self.traffic_beep_pattern = repeat_beeps(0.06, 0.06, 3)
-        self.hazard_beep_pattern = repeat_beeps(0.12, 0.08, 3)
+        self.hazard_beep_pattern = repeat_beeps(0.3, 0.08, 3)
 
     def update(
         self,

@@ -91,7 +91,7 @@ class RaspbotHardware:
 
     def set_led_mode(self, mode: int) -> None:
         self.led_mode = int(mode)
-        self.set_led(self.led_mode != 0)
+        self.set_led(True)
 
     def set_beep(self, on: bool) -> None:
         """비프 스위치를 즉시 ON/OFF한다(논블로킹)."""
