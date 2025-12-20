@@ -98,3 +98,7 @@ Python, OpenCV, NumPy, Ultralytics YOLOv8, Raspberry Pi OS
 
 ## 역할
 팀 프로젝트에서 알고리즘 설계, 구현, 튜닝, 테스트를 전담했습니다.
+
+## 라이선스
+Copyright © 2025 JiHarang. All rights reserved.
+사전 서면 허가 없이 본 소프트웨어의 사용, 복제, 수정, 배포를 금지합니다.
