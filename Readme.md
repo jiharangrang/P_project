@@ -1,113 +1,100 @@
-# P Project (Raspbot V2)
+# P Project (Raspbot V2) — 자율주행 Phase 1
 
-자율주행 Phase 1(주행 가능 도로 전체를 라인 추종하는 확장판) 파이프라인. 하드웨어 제어, 인지, 제어, 실행 루프를 모듈화했고 설정은 YAML 한 곳에 모아 관리합니다.
+**데모 영상(YouTube)**  
+- 평가 영상: https://youtu.be/N6C1uwtE3lk?si=EAEI3_sOiVXPr-va  
+- 1인칭 화면: https://youtu.be/QhH25kdyquQ?si=TwnvQJg0A6bTV1dp  
+![평가 영상](assets/img/test.gif)
 
-## 리포 구조
-```
-P_project/
-├ Readme.md
-├ configs/                 # 설정(YAML)
-│  └ phase1_pid.yaml       # ROI, Lab/HSV 임계, PID/턴/헤딩, YOLO/미션/LOST 복구 옵션
-├ models/
-│  └ yolo/
-│     └ best.pt            # 학습된 YOLOv8 모델(라벨: red/green/oo/xx/car)
-├ scripts/
-│  └ run_phase1.py         # 실행 엔트리(phase1_baseline 호출)
-│
-└ raspbot/                 # 소스 패키지
-   ├ hardware/             # 카메라/모터/서보 HAL
-   │  ├ camera.py               # 카메라 HAL (Camera, CameraConfig)
-   │  └ raspbot.py              # RaspbotHardware/MockRaspbot
-   │
-   ├ control/              # PID/차량 제어
-   │  ├ pid.py                  # PIDController
-   │  └ vehicle_controller.py   # VehicleController
-   │
-   ├ perception/           # 인지
-   │  ├ lane_detection_hsv.py   # HSV 차선 검출
-   │  ├ lane_detection_lab.py   # Lab 차선 검출/헤딩 추정
-   │  ├ preprocessing.py        # ROI/IPM 계산
-   │  ├ visualization.py        # 디버그 오버레이
-   │  ├ yolo_events.py          # YOLO 안정화 이벤트 공급자
-   │  └ yolo_stop_on_red.py     # YOLO 단독 정지 테스트
-   │
-   ├ planning/             # 행동 계획/미션 FSM
-   │  └ mission_fsm.py          # Layer B 미션 FSM + 논블로킹 비프 시퀀서
-   │
-   ├ runtime/
-   │  └ phase1_baseline.py      # HSV/Lab 통합 실행 루프
-   │
-   └ utils/                # FPS 측정/설정 로더
-      ├ config_loader.py        # YAML 로더
-      └ timing.py               # FPSTimer
-```
+자율주행 Phase 1 파이프라인을 개인 포트폴리오용으로 정리한 프로젝트입니다.  
+팀 프로젝트 기반이며, 개인 포트폴리오용으로 핵심 기여와 기술 요소를 정리했습니다.  
+차선 추종(HSV/Lab), YOLO 기반 이벤트 인식, 미션 FSM, LOST 복구까지 하나의 런타임 루프로 통합했습니다.
 
-## 실행하기
+## 핵심 포인트
+- **P1/P2/P3 기반 헤딩 제어**로 직진/커브/S-커브를 안정적으로 추정하고 PID로 조향 제어
+- **P3 중심 도로 필터링**으로 노이즈를 제거해 헤딩 추정 안정성 강화
+- **YOLOv8 이벤트 인식 + 미션 FSM**으로 신호등/장애물/주차 미션을 상태 기반으로 처리
+
+## 설계 의사결정 요약
+- 벽 감지 회피 대신 **검정 도로 기반 차선 추종**으로 전환해 노이즈 급회전 위험을 줄이고 연속 조향을 목표로 설계
+- **P1/P2/P3 밴드 헤딩 추정**과 오프셋 정규화(-1~1)로 해상도/ROI 변화에 덜 민감한 제어 파라미터 구조 채택
+- **반대편 도로 오인식** 문제를 해결하기 위해 P3가 포함된 도로 덩어리만 남기는 필터링과 방어 가중치 로직으로 조향 안정화
+- 조명 변화에 취약한 HSV 한계를 보완하기 위해 **Lab 색공간을 추가**하고 모드 선택형으로 비교/튜닝 가능하게 설계
+- **Haar Cascade 대신 YOLOv8n**(Nano) + 커스텀 데이터셋을 선택해 실제 환경 강건성과 확장성 우선
+- 단발 판단 대신 **FSM 레이어 구조 + confirm/cooldown + LOST 복구**로 미션 안정성과 회복력 확보
+
+## 상세 문서
+- 기술 설명/설정/디버그: `docs/README_technical.md`
+
+## 핵심 로직 (P1/P2/P3 헤딩 제어)
+세 개의 밴드(P1, P2, P3)에서 대표점을 추출해 경로를 구성하고, 이를 기반으로 헤딩과 조향을 계산합니다.
+
+![P1/P2/P3 기반 헤딩 로직](assets/img/logic.png)
+
+## 핵심 로직 (P3 도로 필터링)
+P3에 해당하는 도로 영역만 유지해 배경을 제거하고, 커브/직선에서 안정적인 라벨링을 확보합니다.
+
+![P3 도로 필터링 로직](assets/img/logic2.png)
+
+## 시스템 파이프라인
+1) 원본 프레임 입력 → ROI 계산/IPM 변환  
+2) HSV/Lab 차선 이진화 → P1/P2/P3 추출  
+3) 헤딩 추정 → PID 기반 조향 계산  
+4) YOLO 추론 및 이벤트 안정화  
+5) 미션 FSM으로 최종 속도/조향 결정  
+6) LOST 상태 복구 로직 수행
+
+## 하드웨어/소프트웨어 스펙
+![하드웨어/소프트웨어 스펙](assets/img/hardware.png)
+
+- Main Controller: Raspberry Pi 5 (4GB RAM, Quad-core)
+- Vision Sensor: 1MP USB camera + 2DOF PTZ
+- Actuators: DC Geared Motor
+- Mobility: 4WD Mecanum Wheel Chassis
+- Software OS: Raspberry Pi OS
+- Computer Vision: OpenCV (cv2), NumPy
+- Deep Learning: Ultralytics YOLOv8 (Nano)
+
+## 성과 지표
+중간 결과와 최종 평가를 이미지로 정리했습니다.
+
+![중간 결과 분석](assets/img/1st_test.png)
+
+- Completion status: Yes
+- Rap time: 20.0 sec
+- Trial count: 1
+- Collision count: 0
+
+![최종 평가(2회)](assets/img/final_test.png)
+
+- Completion status: O / O
+- Rap time: 49s / 36s
+- Traffic light(perception): 2 / 1
+- Collision count: 0 / 1
+- Obstacle(perception): 3 / 3
+- Score: 100 / 78
+- Parking target(perception): 0 / X
+
+## 빠른 실행
 ```bash
-python3 scripts/run_phase1.py                # 기본 설정
-python3 scripts/run_phase1.py --mode lab     # Lab 모드 명시
-python3 scripts/run_phase1.py --mode hsv     # HSV 모드 명시
-python3 scripts/run_phase1.py --config configs/phase1_pid.yaml  # 다른 설정 파일 사용
-python3 scripts/run_phase1.py --mock-hw      # 모터/서보 호출을 콘솔 로그로 대체
-python3 scripts/run_phase1.py --headless     # OpenCV 윈도우 없이 실행
+python3 scripts/run_phase1.py
+python3 scripts/run_phase1.py --mode lab
+python3 scripts/run_phase1.py --mode hsv
+python3 scripts/run_phase1.py --config configs/phase1_pid.yaml
+python3 scripts/run_phase1.py --mock-hw
+python3 scripts/run_phase1.py --headless
 ```
 
-## 라인 검출 모드 선택
-- 설정: `perception.mode: lab | hsv` (default: lab)
-- CLI: `python3 scripts/run_phase1.py --mode lab` 또는 `--mode hsv` (설정값을 덮어씀)
-- 파일 교체 없이 모드에 따라 트랙바/파라미터도 자동으로 분기됩니다.
+## 코드 구조 (요약)
+- `scripts/run_phase1.py`: 실행 엔트리
+- `raspbot/runtime/phase1_baseline.py`: 통합 실행 루프
+- `raspbot/perception/`: 차선 검출/전처리/YOLO 이벤트
+- `raspbot/control/`: PID 및 차량 제어
+- `raspbot/planning/mission_fsm.py`: 미션 FSM
+- `configs/phase1_pid.yaml`: 주요 파라미터
+- `models/yolo/best.pt`: YOLOv8 모델
 
-## 설정 파일(주요 항목)
-- `perception`  
-  - `mode`: `lab | hsv`  
-  - 공통: `roi_top`, `roi_bottom`, `ipm_resolution`  
-  - `hsv.detect_value`: 회색 밝기 임계  
-  - `lab.detect_value`: L 밝기 임계  
-  - `lab.red_l_min/red_a_min/red_b_min`, `lab.gray_a_dev/gray_b_dev`: Lab 임계값(L/a/b 최소 혹은 a/b 편차)
-  - `yolo`: YOLOv8 이벤트 인식 설정(모델 경로/입력크기/신뢰도, Confirm/쿨다운, `min_area_ratio.{red,green,oo,xx,car}`)
-- `control`  
-  - `base_speed`, `speed_limit`, `steer_limit`, `steer_scale`, `steer_deadband`  
-  - PID: `kp`, `ki`, `kd`  
-  - `turn`: `slope_thresh`, `offset_thresh`, `speed_scale`, `steer_scale`  
-  - `heading`: `smooth_alpha`, `connect_close_px`, `merge_gap_px`, `p1_margin_px`
-- `runtime`  
-  - `show_windows`, `print_debug`, `fail_safe_beep`, `fps_window`, `headless_delay`, `enable_sliders`
-  - LOST 복구: `lost_recovery_wait_s`, `lost_reverse_speed`, `lost_reverse_duration_s`
-- `mission`
-  - `hazard.beep_delay`
-  - `parking.approach_speed`, `parking.missing_frames`, `parking.steer_kp`
+## 기술 스택
+Python, OpenCV, NumPy, Ultralytics YOLOv8, Raspberry Pi OS
 
-## 런타임 제어(키)
-- `ESC` / `q`: 종료
-- `s`: 모터 시작/일시정지 토글(초기 상태: 정지)
-- `SPACE`: 일시정지 후 아무 키나 눌러 재개
-
-## 슬라이더(Windows 활성 시)
-- ROI/밝기 임계: `roi_top`, `roi_bottom`, `detect_value`
-- Lab 모드 전용: `lab_red_l_min`, `lab_red_a_min`, `lab_red_b_min`, `lab_gray_a_dev`, `lab_gray_b_dev`
-- 조향/속도: `pid_kp_x100`, `pid_ki_x100`, `pid_kd_x100`, `base_speed`, `steer_scale_x100`
-- 턴 파라미터: `turn_slope_thr_x100`, `turn_offset_thr_x100`, `turn_speed_scale_x100`, `turn_steer_scale_x100`
-- 헤딩 파라미터: `heading_smooth_x100`, `heading_connect_close_px`, `heading_merge_gap_px`, `heading_p1_margin_px`
-- 카메라/서보: `brightness`, `contrast`, `saturation`, `exposure`, `gain`, `servo1_yaw`, `servo2_pitch`
-- YOLO 면적 임계: `yolo_area_red_x1000`, `yolo_area_green_x1000`, `yolo_area_oo_x1000`, `yolo_area_xx_x1000`, `yolo_area_car_x1000`
-
-## 주요 처리 흐름
-1) 프레임 입력(원본)  
-2) ROI 계산/오버레이 → IPM 변환 → HSV/Lab 차선 이진화  
-3) 헤딩 추정 → PID로 조향 계산  
-4) Layer A(차선 상태: STRAIGHT/TURN/LOST)로 속도·조향 스케일링  
-5) 같은 원본 프레임으로 YOLO 추론 수행  
-   - `yolo_events`에서 Confirm/min_area_ratio/cooldown 안정화 후 이벤트 생성  
-6) Layer B(미션 FSM: DRIVE/WAIT_TRAFFIC_LIGHT/HAZARD/PARKING)로 최종 출력 override  
-7) LOST가 3초 지속되면 2초 후진 복구 수행  
-8) 모터/서보 출력 및 디버그 시각화(차선 바이너리 + YOLO 박스)
-
-## 디버그/로그
-- 모터 활성 상태에서만 터미널 로그 출력: `heading_err`, `slope`, `state`, `mission`, `steer`, `speed_l/r`
-- OpenCV 창: `phase1/frame`(ROI+YOLO 박스 오버레이), `phase1/binary`(선택 도로 영역 강조)
-- YOLO 박스 색: 클래스 기본색, 임계(`min_area_ratio`) 이상이면 노란색
-- 모터 정지 시에는 출력/구동이 멈추며, `target_mask`를 반전한 디버그 바이너리가 계속 표시됩니다.
-
-## 개발 팁
-- Lab 임계 조정은 `detect_value`(L 밝기)와 `lab_red_*`/`lab_gray_*` 슬라이더를 함께 조절해 그림자·반사에 맞추세요.
-
+## 역할
+팀 프로젝트에서 알고리즘 설계, 구현, 튜닝, 테스트를 전담했습니다.
